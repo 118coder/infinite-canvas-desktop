@@ -1,20 +1,21 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { Menu, Settings2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
-import { AnnouncementBanner } from "@/components/layout/announcement-banner";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { useCanvasUiStore } from "@/app/(user)/canvas/stores/use-canvas-ui-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
 export function AppTopNav() {
     const pathname = usePathname();
     const openProjectId = useCanvasUiStore((state) => state.openProjectId);
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const hideHeader = Boolean(openProjectId);
     const slug = pathname.split("/").filter(Boolean)[0];
@@ -22,7 +23,6 @@ export function AppTopNav() {
 
     return (
         <>
-            {!hideHeader && <AnnouncementBanner />}
             {!hideHeader ? (
                 <header className="sticky top-0 z-20 h-16 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
                     <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
@@ -72,6 +72,15 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                            <button
+                                type="button"
+                                onClick={() => openConfigDialog(false)}
+                                className="inline-flex size-9 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white"
+                                aria-label="打开设置"
+                                title="设置（渠道 / API Key / 生成参数）"
+                            >
+                                <Settings2 className="size-5" />
+                            </button>
                             <Link
                                 href="/canvas"
                                 className="inline-flex h-9 items-center gap-2 rounded-lg bg-stone-950 px-3.5 text-sm font-medium text-white transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-stone-200"

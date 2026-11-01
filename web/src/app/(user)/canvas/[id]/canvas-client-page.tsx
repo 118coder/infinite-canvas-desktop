@@ -5463,6 +5463,7 @@ function CanvasTopBar({
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -5530,6 +5531,9 @@ function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                    <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="设置" title="设置（渠道 / API Key / 生成参数）" onClick={() => openConfigDialog(false)}>
+                        <Settings2 className="size-4" />
+                    </button>
                     <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="快捷键" onClick={() => setShortcutsOpen(true)}>
                         <Keyboard className="size-4" />
                     </button>

@@ -18,6 +18,17 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         void loadPublicSettings();
     }, [loadPublicSettings]);
 
+    // 应用内屏蔽浏览器原生右键菜单（文本编辑场景保留），避免右键功能被浏览器菜单干扰
+    useEffect(() => {
+        const handler = (event: MouseEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("input, textarea, [contenteditable='true']")) return;
+            event.preventDefault();
+        };
+        document.addEventListener("contextmenu", handler);
+        return () => document.removeEventListener("contextmenu", handler);
+    }, []);
+
     useEffect(() => {
         if (handledConfigParams.current) return;
         const searchParams = new URLSearchParams(window.location.search);
