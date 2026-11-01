@@ -81,6 +81,7 @@ func main() {
 		}
 	}()
 	waitForServer(url)
+	log.Printf("本地服务已就绪：%s", url)
 
 	// 独立应用窗口（WebView2）；不可用时回退系统浏览器
 	if openWindow(url) {
