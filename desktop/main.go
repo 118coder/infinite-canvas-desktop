@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -96,6 +97,9 @@ func openWindow(url string) (opened bool) {
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
 		AutoFocus: true,
+		// 画布项目和生成的图片都存在 IndexedDB 里，默认会写到 C:\Users\<用户>\AppData，
+		// 生成的图多了很快把 C 盘吃满。这里固定到 exe 同级的 userdata 目录。
+		DataPath: prepareWebViewDataPath(),
 		WindowOptions: webview2.WindowOptions{
 			Title:  "无限画布",
 			Width:  1440,
@@ -115,6 +119,70 @@ func openWindow(url string) (opened bool) {
 
 const defaultDesktopPort = 36512
 const desktopPortFile = "desktop-port.txt"
+const webViewDataDir = "userdata"
+
+// prepareWebViewDataPath 把 WebView2 的用户数据目录（画布 IndexedDB、图片 blob、HTTP 缓存）
+// 固定到 exe 同级的 userdata 目录，避免占满 C 盘；首次启动时把旧版本留在
+// %AppData%\<exe 名> 下的数据整体迁移过来，避免升级后画布"消失"。
+func prepareWebViewDataPath() string {
+	legacy := ""
+	if exePath, err := os.Executable(); err == nil {
+		legacy = filepath.Join(os.Getenv("AppData"), filepath.Base(exePath))
+	}
+	if _, err := os.Stat(webViewDataDir); os.IsNotExist(err) && legacy != "" {
+		if info, statErr := os.Stat(legacy); statErr == nil && info.IsDir() {
+			log.Printf("正在把旧数据目录迁移到程序目录：%s → %s", legacy, webViewDataDir)
+			if renameErr := os.Rename(legacy, webViewDataDir); renameErr != nil {
+				// 跨盘符无法直接 rename，退化成复制；复制失败就继续用旧目录，绝不丢数据
+				if copyErr := copyDir(legacy, webViewDataDir); copyErr != nil {
+					log.Printf("迁移失败，继续使用旧目录：%v", copyErr)
+					_ = os.RemoveAll(webViewDataDir)
+					return legacy
+				}
+				if removeErr := os.RemoveAll(legacy); removeErr != nil {
+					log.Printf("旧数据目录未能删除，可手动清理：%s（%v）", legacy, removeErr)
+				}
+			}
+			log.Printf("数据目录已就绪：%s", webViewDataDir)
+		}
+	}
+	if err := os.MkdirAll(webViewDataDir, 0o755); err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(webViewDataDir)
+	if err != nil {
+		return webViewDataDir
+	}
+	return abs
+}
+
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return relErr
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		source, openErr := os.Open(path)
+		if openErr != nil {
+			return openErr
+		}
+		defer source.Close()
+		destination, createErr := os.Create(target)
+		if createErr != nil {
+			return createErr
+		}
+		defer destination.Close()
+		_, copyErr := io.Copy(destination, source)
+		return copyErr
+	})
+}
 
 // listenDesktop 以固定端口启动本地服务，保证 WebView2 的 origin 稳定，
 // 这样 IndexedDB 里的画布数据和图片才能真正持久化。

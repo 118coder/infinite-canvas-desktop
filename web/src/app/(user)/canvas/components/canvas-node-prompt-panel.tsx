@@ -51,7 +51,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const config = buildNodeConfig(globalConfig, node, mode);
     const { data: autodlWorkflow } = useAutoDLWorkflow(config, mode === "video" ? config.model : "");
     const isPanorama = isPanoramaNodeType(node.type);
-    const textOverwrite = node.type === CanvasNodeType.Text && globalConfig.nodeRegenerateBehavior === "overwrite" && Boolean(node.metadata?.clientTaskId);
+    const textOverwrite = node.type === CanvasNodeType.Text && Boolean(node.metadata?.clientTaskId);
     const mediaLoading = (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio || textOverwrite) && node.metadata?.status === "loading";
     const isStopping = node.metadata?.status === "stopping";
     const stopFailed = isStopping && Boolean(node.metadata?.errorDetails);

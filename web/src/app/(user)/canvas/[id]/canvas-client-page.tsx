@@ -3286,8 +3286,14 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 return;
             }
 
-            const overwriteExisting = effectiveConfig.nodeRegenerateBehavior === "overwrite" && sourceNode?.type === mode && !sourceNode.metadata?.isBatchRoot
-                && Boolean(sourceNode.metadata?.content || sourceNode.metadata?.clientTaskId)
+            // 节点面板的生成按钮语义是"在本节点上重新生成"：
+            // 已有结果时直接覆盖本节点（清空旧内容，只用新提示词 + 上游连线参考重新生成），
+            // 既不会另起一个新节点，也不会把节点自身的旧图再当成参考图发一轮请求。
+            // 想保留旧结果请用「创造副本」（Ctrl/Cmd+D）。
+            const nodeMatchesMode = sourceNode ? (mode === "image" ? isCanvasImageNodeType(sourceNode.type) : sourceNode.type === mode) : false;
+            const hasExistingResult = Boolean(sourceNode?.metadata?.content || sourceNode?.metadata?.clientTaskId);
+            // 文本节点本来就在本节点上按"改写原文"处理，不参与图片/视频/音频的覆盖分支
+            const overwriteExisting = mode !== "text" && nodeMatchesMode && hasExistingResult && !sourceNode?.metadata?.isBatchRoot
                 && (mode !== "image" || workflowRef || !isKIESeedreamLayerDecompositionModel(generationConfig.model));
             const runningRequest = Symbol();
             runningRequestRef.current = runningRequest;
@@ -3302,11 +3308,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const generationContext = await hydrateNodeGenerationContext(
                 buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
             );
-            // 重新生成不引用节点自身已生成的结果（包括内容相同的副本节点）
+            // 重新生成不引用节点自身已生成的结果（包括内容相同的副本节点、以及从自身连出来的连线）
             const ownContent = sourceNode && isCanvasImageNodeType(sourceNode.type) ? sourceNode.metadata?.content : undefined;
             const ownStorageKey = ownContent ? sourceNode.metadata?.storageKey : undefined;
             if (ownContent || ownStorageKey) {
-                generationContext.referenceImages = generationContext.referenceImages.filter((image) => image.dataUrl !== ownContent && (!ownStorageKey || image.storageKey !== ownStorageKey));
+                generationContext.referenceImages = generationContext.referenceImages.filter((image) => image.id !== nodeId && image.dataUrl !== ownContent && (!ownStorageKey || image.storageKey !== ownStorageKey));
+            } else {
+                generationContext.referenceImages = generationContext.referenceImages.filter((image) => image.id !== nodeId);
             }
             const effectivePrompt = generationContext.prompt.trim();
             const requestPrompt =
