@@ -3,8 +3,8 @@ import localforage from "localforage";
 
 import { useCanvasStore, type CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { createZip, readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { getMediaBlob, setMediaBlob, resolveMediaUrl } from "@/services/file-storage";
+import { getImageBlob, setImageBlob, resolveImageUrl } from "@/services/image-storage";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { defaultConfig, useConfigStore, type AiConfig } from "@/stores/use-config-store";
@@ -112,10 +112,32 @@ export async function importDataPackage(file: File) {
     importTrace(`files restored (${data.files?.length || 0})`);
 
     if (Array.isArray(data.projects)) {
+        // 恢复 blob 后，把节点 content 里的旧会话死链接替换为新会话可用地址
+        const fixedProjects = await Promise.all(
+            data.projects.map(async (project) => ({
+                ...project,
+                nodes: await Promise.all(
+                    (project.nodes || []).map(async (node: CanvasProject["nodes"][number]) => {
+                        if (!node.metadata) return node;
+                        const sk = node.metadata.storageKey;
+                        const content = node.metadata.content;
+                        if (!sk || !content) return node;
+                        if (content.startsWith("blob:") || content.startsWith("http:") && content.includes("127.0.0.1")) {
+                            const isImage = sk.startsWith("image:");
+                            const fresh = isImage ? await resolveImageUrl(sk, "") : await resolveMediaUrl(sk, "");
+                            if (fresh && fresh !== content) {
+                                return { ...node, metadata: { ...node.metadata, content: fresh } };
+                            }
+                        }
+                        return node;
+                    }),
+                ),
+            })),
+        );
         const canvasStore = useCanvasStore.getState();
         const currentProjects = canvasStore.projects;
-        const importedIds = new Set(data.projects.map((project) => project.id));
-        const merged = [...currentProjects.filter((project) => !importedIds.has(project.id)), ...data.projects].sort(
+        const importedIds = new Set(fixedProjects.map((project) => project.id));
+        const merged = [...currentProjects.filter((project) => !importedIds.has(project.id)), ...fixedProjects].sort(
             (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
         );
         useCanvasStore.setState({ projects: merged });
