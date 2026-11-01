@@ -20,7 +20,7 @@ const REPAIR_QUEUE_KEY = "infinite-canvas:media-repair-queue";
 // 小于该长度的 data URL 继续内联保存（图标、缩略图等），更大的走本地 blob 存储。
 const INLINE_MEDIA_LIMIT = 8192;
 // 需要被重写成 storageKey 的字段
-const MEDIA_FIELDS = ["content", "url", "dataUrl"] as const;
+const MEDIA_FIELDS = ["content", "url", "dataUrl", "coverUrl"] as const;
 
 export type DataPackageMode = "full" | "reference";
 
@@ -368,16 +368,20 @@ function mergeProjects(existing: CanvasProject[], incoming: CanvasProject[]) {
 }
 
 // 内联 base64 / 会话级 blob: 链接 → storageKey
-async function scrubMedia<T>(value: T, context: ScrubContext): Promise<T> {
+async function scrubMedia<T>(value: T, context: ScrubContext, inheritedTitle = ""): Promise<T> {
     if (Array.isArray(value)) {
         const items: unknown[] = [];
-        for (const item of value) items.push(await scrubMedia(item, context));
+        for (const item of value) items.push(await scrubMedia(item, context, inheritedTitle));
         return items as unknown as T;
     }
     if (!value || typeof value !== "object") return value;
     const source = value as Record<string, unknown>;
-    const storageKey = typeof source.storageKey === "string" ? source.storageKey : "";
-    if (storageKey && typeof source.title === "string" && source.title) context.hints.set(storageKey, source.title);
+    // 节点标题是最好的文件名线索：节点自身有 title，storageKey 在 metadata/data 里，
+    // 所以标题要往下继承一层，才能给内联图片落到 storageKey 时也带上名字。
+    const ownTitle = typeof source.title === "string" ? source.title.trim() : "";
+    const title = ownTitle || inheritedTitle;
+    let storageKey = typeof source.storageKey === "string" ? source.storageKey : "";
+    if (isLocalMediaKey(storageKey) && title) context.hints.set(storageKey, title);
 
     let next: Record<string, unknown> | null = null;
     for (const field of MEDIA_FIELDS) {
@@ -393,13 +397,17 @@ async function scrubMedia<T>(value: T, context: ScrubContext): Promise<T> {
         const key = await externalizeInlineMedia(raw, storageKey);
         next = next || { ...source };
         next[field] = "";
-        if (key && !storageKey) next.storageKey = key;
+        if (key && !storageKey) {
+            next.storageKey = key;
+            storageKey = key;
+            if (title) context.hints.set(key, title);
+        }
     }
 
     const base = next || { ...source };
     for (const key of Object.keys(base)) {
         const child = base[key];
-        if (child && typeof child === "object") base[key] = await scrubMedia(child, context);
+        if (child && typeof child === "object") base[key] = await scrubMedia(child, context, title);
     }
     return base as unknown as T;
 }
@@ -468,7 +476,7 @@ async function restoreAssetMedia(asset: Asset, available: Set<string>): Promise<
     const data = asset.data as Record<string, unknown>;
     const storageKey = typeof data.storageKey === "string" ? data.storageKey : "";
     let nextData = data;
-    for (const field of ["url", "dataUrl"] as const) {
+    for (const field of ["url", "dataUrl", "coverUrl"] as const) {
         const raw = data[field];
         if (typeof raw !== "string" || !raw) continue;
         if (raw.startsWith("data:") && raw.length > INLINE_MEDIA_LIMIT) {
@@ -480,6 +488,11 @@ async function restoreAssetMedia(asset: Asset, available: Set<string>): Promise<
             continue;
         }
         if (raw.startsWith("blob:")) nextData = { ...nextData, [field]: "" };
+    }
+    // 封面被清空时用已解析的图片地址补回，避免素材列表丢缩略图
+    if (typeof nextData.coverUrl === "string" && !nextData.coverUrl) {
+        const fallback = typeof nextData.dataUrl === "string" && nextData.dataUrl ? nextData.dataUrl : typeof nextData.url === "string" ? nextData.url : "";
+        if (fallback) nextData = { ...nextData, coverUrl: fallback };
     }
     return nextData === data ? asset : ({ ...asset, data: nextData } as Asset);
 }
