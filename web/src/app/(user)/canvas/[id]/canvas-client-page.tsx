@@ -157,6 +157,32 @@ function formatPreviewTime(value: number) {
     return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
 }
 
+// 副本/粘贴不继承生成中的中间状态：清空任务跟踪字段，状态按已有内容归位
+function stripGenerationRuntimeState(metadata: CanvasNodeMetadata): CanvasNodeMetadata {
+    return {
+        ...metadata,
+        status: metadata.content ? NODE_STATUS_SUCCESS : "idle" as const,
+        clientTaskId: undefined,
+        taskBackend: undefined,
+        imageTaskId: undefined,
+        imageTaskResultId: undefined,
+        audioTaskId: undefined,
+        audioTaskResultId: undefined,
+        videoTaskId: undefined,
+        videoTaskVideoId: undefined,
+        videoTaskTranslation: undefined,
+        startedAt: undefined,
+        progress: undefined,
+        durationMs: undefined,
+        errorDetails: undefined,
+        isBatchRoot: undefined,
+        batchRootId: undefined,
+        batchChildIds: undefined,
+        primaryImageId: undefined,
+        imageBatchExpanded: undefined,
+    };
+}
+
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata, nodeId?: string): CanvasNodeData {
     const spec = getNodeSpec(type);
     const defaults = type === CanvasNodeType.Image || type === CanvasNodeType.Video ? useCanvasUiStore.getState().generationDefaults[type] : undefined;
@@ -1409,17 +1435,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 title: node.type === CanvasNodeType.Group ? node.title : node.title.endsWith(" Copy") ? node.title : `${node.title} Copy`,
                 position: { x: node.position.x + 36, y: node.position.y + 36 },
                 metadata: node.metadata ? {
-                    ...node.metadata,
-                    clientTaskId: undefined,
-                    taskBackend: undefined,
-                    batchChildIds: undefined,
-                    batchRootId: undefined,
-                    isBatchRoot: undefined,
-                    primaryImageId: undefined,
-                    imageBatchExpanded: undefined,
-                    ...(node.metadata.status === "stopping" || node.metadata.status === "stopped"
-                        ? { status: node.metadata.content ? NODE_STATUS_SUCCESS : "idle" as const, errorDetails: undefined }
-                        : {}),
+                    ...stripGenerationRuntimeState(node.metadata),
                 } : undefined,
             };
         });
@@ -1561,12 +1577,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     y: node.position.y + dy,
                 },
                 metadata: node.metadata ? {
-                    ...node.metadata,
-                    clientTaskId: undefined,
-                    taskBackend: undefined,
-                    ...(node.metadata.status === "stopping" || node.metadata.status === "stopped"
-                        ? { status: node.metadata.content ? NODE_STATUS_SUCCESS : "idle" as const, errorDetails: undefined }
-                        : {}),
+                    ...stripGenerationRuntimeState(node.metadata),
                 } : undefined,
             };
         });
@@ -3281,6 +3292,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const generationContext = await hydrateNodeGenerationContext(
                 buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
             );
+            // 重新生成不引用节点自身已生成的结果（包括内容相同的副本节点）
+            const ownContent = sourceNode && isCanvasImageNodeType(sourceNode.type) ? sourceNode.metadata?.content : undefined;
+            const ownStorageKey = ownContent ? sourceNode.metadata?.storageKey : undefined;
+            if (ownContent || ownStorageKey) {
+                generationContext.referenceImages = generationContext.referenceImages.filter((image) => image.dataUrl !== ownContent && (!ownStorageKey || image.storageKey !== ownStorageKey));
+            }
             const effectivePrompt = generationContext.prompt.trim();
             const requestPrompt =
                 mode === "video" || (mode === "image" && !isPanoramaNodeType(sourceNode?.type))
@@ -4327,13 +4344,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const generationType = savedImageMetadata?.generationType;
             const useReferenceImages = generationType ? generationType === "edit" : Boolean(context?.referenceImages.length);
             const retryReferenceImages =
-                hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
+                hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNode.id === node.id ? [] : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
             if (useReferenceImages && !retryReferenceImages) {
                 message.error("参考图片已丢失，无法继续重试");
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "参考图片已丢失，无法继续重试" } } : item)));
                 return;
             }
-            const retryImages = retryReferenceImages || [];
+            // 重试不引用重试节点自身已生成的结果（包括内容相同的副本节点）
+            const retryOwnContent = isCanvasImageNodeType(node.type) ? node.metadata?.content : undefined;
+            const retryOwnStorageKey = retryOwnContent ? node.metadata?.storageKey : undefined;
+            const retryImages = (retryReferenceImages || []).filter((image) => image.dataUrl !== retryOwnContent && (!retryOwnStorageKey || image.storageKey !== retryOwnStorageKey));
 
             const runningRequest = Symbol();
             runningRequestRef.current = runningRequest;

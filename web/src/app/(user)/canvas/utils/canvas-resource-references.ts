@@ -63,7 +63,7 @@ export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData
 
 function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return connections
-        .filter((connection) => connection.toNodeId === nodeId)
+        .filter((connection) => connection.toNodeId === nodeId && connection.fromNodeId !== nodeId)
         .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))
         .filter((node): node is CanvasNodeData => Boolean(node && isCanvasReferenceNode(node)));
 }
