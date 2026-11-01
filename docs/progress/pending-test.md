@@ -8,6 +8,9 @@ description: 当前版本已实现但仍需人工验证的变更项
 ## 桌面版 exe（infinite-canvas-desktop.exe）
 
 - 已通过 GitHub Actions 自动构建并本地冒烟验证：首页/画布页/JS 资源 200，Go API（health/settings/prompts）正常
+- 广告清理：删除顶部 TokenDance 公告横幅（含 404 页）、首页两张带推广/返利链接的轮播图（保留产品功能展示图）
+- 设置入口：顶栏新增齿轮按钮、画布页顶部新增齿轮按钮，均可打开「配置与用户偏好」（本地模型渠道 / API Key / 生成参数）；此前设置弹窗无任何手动入口
+- 右键体验：应用内全局屏蔽浏览器原生右键菜单（文本输入框内保留，方便复制粘贴），画布自研右键菜单不再被浏览器菜单干扰
 - exe 位置：仓库根目录 `infinite-canvas-desktop.exe`（约 69MB）；双击或「启动桌面版.bat」启动，自动打开浏览器
 - 端口机制：默认每次启动由系统分配随机空闲端口（不会与游戏等固定端口程序冲突）；需要固定端口时设置环境变量 `CANVAS_DESKTOP_PORT`（如 36512）
 - 云端构建：仓库 https://github.com/118coder/infinite-canvas-desktop ，push 到 main 自动构建；滚动发行包 `desktop-latest` 可随时从浏览器重新下载 exe
