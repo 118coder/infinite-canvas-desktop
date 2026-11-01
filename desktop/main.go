@@ -57,7 +57,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d", listener.Addr().(*net.TCPListener).Port)
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		log.Fatal("unexpected listener address")
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d", tcpAddr.Port)
 	log.Printf("无限画布桌面版已启动：%s", url)
 	openBrowser(url)
 	if err := http.Serve(listener, engine); err != nil {
