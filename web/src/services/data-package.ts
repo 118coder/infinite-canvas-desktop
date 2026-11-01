@@ -99,10 +99,14 @@ export async function importDataPackage(file: File): Promise<{ projects: number;
     );
 
     // 2. 修正节点 content：把旧会话死链接替换为新地址，base64 大图转为本地存储
-    const projects = (data.projects || []).map((project) => ({
-        ...project,
-        nodes: (project.nodes || []).map((node) => ({ ...node, metadata: fixNodeMetadata(node.metadata) })),
-    }));
+    const projects = await Promise.all(
+        (data.projects || []).map(async (project) => ({
+            ...project,
+            nodes: await Promise.all(
+                (project.nodes || []).map(async (node) => ({ ...node, metadata: await fixNodeMetadata(node.metadata) })),
+            ),
+        })),
+    );
 
     // 3. 修正素材 content
     const assets = (data.assets || []).map((asset) => ({ ...asset }));
