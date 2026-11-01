@@ -797,11 +797,11 @@ function RecoveringImageContent(props: NodeContentRendererProps) {
     if (src) return <ImageContent {...props} node={{ ...props.node, metadata: { ...props.node.metadata, content: src } }} />;
 
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
-            <div className="flex size-14 items-center justify-center rounded-2xl" style={{ background: theme.toolbar.activeBg }}>
-                <ImageIcon className={`size-6 opacity-30 ${failed ? "" : "animate-pulse"}`} />
+        <div className={`flex h-full w-full flex-col items-center justify-center gap-3 ${failed ? "text-amber-500" : ""}`} style={failed ? undefined : { color: theme.node.placeholder }}>
+            <div className="flex size-14 items-center justify-center rounded-2xl" style={{ background: failed ? "rgba(245,158,11,.14)" : theme.toolbar.activeBg }}>
+                <ImageIcon className={`size-6 ${failed ? "opacity-70" : "animate-pulse opacity-30"}`} />
             </div>
-            <span className="text-[10px] tracking-[0.18em] opacity-50">{failed ? "图片缺失 · 请在设置中补齐" : "正在恢复图片"}</span>
+            <span className="text-[10px] tracking-[0.18em] opacity-70">{failed ? "图片缺失 · 请在设置中补齐" : "正在恢复图片"}</span>
         </div>
     );
 }

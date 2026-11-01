@@ -3310,7 +3310,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             );
             // 重新生成不引用节点自身已生成的结果（包括内容相同的副本节点、以及从自身连出来的连线）
             const ownContent = sourceNode && isCanvasImageNodeType(sourceNode.type) ? sourceNode.metadata?.content : undefined;
-            const ownStorageKey = ownContent ? sourceNode.metadata?.storageKey : undefined;
+            const ownStorageKey = ownContent ? sourceNode?.metadata?.storageKey : undefined;
             if (ownContent || ownStorageKey) {
                 generationContext.referenceImages = generationContext.referenceImages.filter((image) => image.id !== nodeId && image.dataUrl !== ownContent && (!ownStorageKey || image.storageKey !== ownStorageKey));
             } else {
@@ -4698,6 +4698,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     }}
                     onContextMenu={handleCanvasContextMenu}
                     onDrop={handleDrop}
+                    overlay={
+                        projectLoaded && !nodes.length ? (
+                            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2" style={{ color: theme.node.muted }}>
+                                <div className="mb-1 grid size-16 place-items-center rounded-2xl border" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+                                    <ImageIcon className="size-7 opacity-45" />
+                                </div>
+                                <div className="text-sm font-medium">空白画布</div>
+                                <div className="max-w-sm text-center text-xs leading-5 opacity-60">把图片或视频拖进来，双击空白处新建节点，或用左下角工具栏添加文本与图片；连到同一节点的相邻节点会自动成为参考图。</div>
+                            </div>
+                        ) : null
+                    }
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 6 }}>
                         {connections

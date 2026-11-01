@@ -140,6 +140,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                    <span className="h-6 w-px shrink-0 opacity-60" style={{ background: theme.toolbar.border }} />
                     {mode === "video" || (mode === "image" && !isPanorama) ? (
                         <CanvasCameraControl value={node.metadata?.cameraControl} onChange={(cameraControl) => onConfigChange(node.id, { cameraControl })} buttonClassName="!h-10 !min-w-[92px] !justify-start !rounded-full !px-3" />
                     ) : null}

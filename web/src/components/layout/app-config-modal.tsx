@@ -431,8 +431,12 @@ export function AppConfigModal() {
                 message.warning(`已导入${label}：画布 ${result.projects} 个、媒体 ${result.files} 个；有 ${result.missing.length} 张图片本机缺失，请在下方「缺失图片补齐」中定位文件`);
                 return;
             }
-            message.success(`数据工程已导入（${label}，画布 ${result.projects} 个、媒体 ${result.files} 个），正在刷新页面...`);
-            setTimeout(() => window.location.reload(), 1200);
+            message.success(`数据工程已导入（${label}，画布 ${result.projects} 个、媒体 ${result.files} 个），正在打开导入的画布...`);
+            const target = result.projectIds[0];
+            setTimeout(() => {
+                if (target) window.location.assign(`/canvas?project=${encodeURIComponent(target)}`);
+                else window.location.reload();
+            }, 1200);
         } catch (error) {
             hide();
             message.error(error instanceof Error ? error.message : "导入数据工程失败");
@@ -692,7 +696,7 @@ export function AppConfigModal() {
                                 </div>
                             </div>
                             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                <Button size="small" loading={packaging && packagingMode === "full"} onClick={() => void handleExportPackage("full")}>
+                                <Button size="small" type="primary" loading={packaging && packagingMode === "full"} onClick={() => void handleExportPackage("full")}>
                                     导出完整包
                                 </Button>
                                 <Button size="small" loading={packaging && packagingMode === "reference"} onClick={() => void handleExportPackage("reference")}>
@@ -708,7 +712,8 @@ export function AppConfigModal() {
                             <div className="mt-3 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="text-xs font-medium text-amber-700 dark:text-amber-300">
-                                        缺失图片 {repairQueue.length} 张（storageKey 在本地不存在）
+                                        缺失图片 {repairQueue.length} 张 · 共 {formatBytes(repairQueue.reduce((sum, item) => sum + (item.bytes || 0), 0))}
+                                        <span className="ml-1 font-normal opacity-70">（storageKey 在本地不存在）</span>
                                     </div>
                                     <div className="flex shrink-0 items-center gap-2">
                                         <Button size="small" loading={repairing} onClick={handlePickRepairBatch}>

@@ -1,229 +1,129 @@
 <p align="center">
-  <img src="web/public/logo.svg" width="96" alt="infinite-canvas logo">
+  <img src="web/public/logo.svg" width="88" alt="无限画布 logo">
 </p>
 
-<h1 align="center">无限画布 (infinite-canvas)</h1>
+<h1 align="center">无限画布</h1>
 
 <p align="center">
-  <a href="https://github.com/tigerowo/infinite-canvas"><img src="https://img.shields.io/github/stars/tigerowo/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <sub>在无限画布上编排图片、视频与音频，把 AI 生成变成可以反复迭代的视觉工作台</sub>
+</p>
+
+<p align="center">
   <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.8.3-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
-  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker ready"></a>
-  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.25-00add8?style=flat-square&logo=go&logoColor=white" alt="Go"></a>
 </p>
 
-<p align="center">
-  <a href="#联系方式"><img src="https://img.shields.io/badge/微信交流群已开放-扫码加入-07C160?style=flat-square&logo=wechat&logoColor=white" alt="微信群"></a>
-</p>
+---
 
-<p align="center">
-  <strong>Windows 本地安装包现已同步更新</strong><br>
-  <sub>无需从源码构建，下载即可本地运行</sub>
-</p>
+## 这是什么
 
-<p align="center">
-  <a href="https://github.com/tigerowo/infinite-canvas/releases/latest">
-    <img
-      src="https://img.shields.io/github/v/release/tigerowo/infinite-canvas?style=for-the-badge&logo=windows11&logoColor=white&label=Windows%20EXE&color=2563eb"
-      alt="下载 Windows EXE"
-    >
-  </a>
-</p>
+无限画布是一个本地优先的 AI 视觉创作工作台。画布、素材、生成记录和图片本体都保存在你自己的电脑上，不需要注册账号。你可以在自由画布上摆放图片、视频、音频和文本节点，用连线表达"谁是谁的参考"，然后在一个节点上反复生成、局部修改、比较结果。
 
-无限画布是一款面向图片，视频，音频，全能创作的开源工作台。它把画布编排、AI 图片、视频、音频生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果
+## 核心能力
 
-## 赞助商
+| 能力 | 说明 |
+| --- | --- |
+| 无限画布 | 拖拽平移、多选、打组、对齐吸附、连线自动整理、撤销重做；连线即参考关系 |
+| 图片生成 | 文生图、图生图、参考图编辑、批量出图、多角度、局部重绘、裁剪、切图、超分放大 |
+| 视频生成 | 首尾帧、参考视频、多镜头、镜头参数面板，支持工作流渠道（ComfyUI / AutoDL 等） |
+| 音频生成 | TTS 配音、音色与语速设置、参考音频 |
+| 全景图 | 全景节点与 3D 预览，支持续画与方向调整 |
+| 3D 导演台 | 时间轴 + 摄像机机位，用来摆构图和运镜，再把机位画面输出成参考图 |
+| 对话助手 | Agent 按选中节点和上游节点分析、规划，直接在画布上改提示词、加节点、批量生成 |
+| 摄像机控制 | 图片 / 视频 / 配置节点可独立设置相机、镜头、焦距、光圈，自动写进提示词 |
+| 提示词库 | 保存常用提示词，支持 `@` 引用画布上的图片与文本节点 |
+| 我的素材 | 生成结果一键存素材，可分类、打标签，随时拖回画布复用 |
+| 数据工程 | 一键打包/迁移全部画布、素材、配置与图片，支持只含清单的轻量"引用包" |
+| 模型渠道 | 本地渠道（OpenAI 兼容接口）、自定义工作流、自有 S3 / WebDAV 存储 |
 
-<table>
-  <tr>
-    <td width="190" align="center">
-      <a href="https://tokendance.space/" target="_blank" rel="noopener"><img src="https://tokendance.space/TokenDance%E5%93%81%E7%89%8C%E5%9B%BE%E6%A0%87-%E9%BB%91%E8%89%B2%E5%BA%95.svg" width="163" alt="TokenDance 词元跳动"></a>
-    </td>
-    <td>
-      <strong>观猹 × TokenDance｜从产品诞生到持续增长</strong> 观猹是面向 AI 产品与 AI Builder 的产品社区和创新生态，帮助好产品找到真正懂它的用户。同时，<a href="https://tokendance.space/" target="_blank" rel="noopener noreferrer">TokenDance</a> 为开发者提供统一、低成本的多模型调用入口，并通过“百亿 Token 补贴”“开发者计划”等福利降低早期产品的模型调用成本。观猹与 TokenDance 希望让每一个想法都能更轻松地从 Demo 走向真实世界。
-    </td>
-  </tr>
-  <tr>
-    <td width="190" align="center">
-      <a href="https://88api.ai/sign-up?aff=25ty" target="_blank" rel="noopener"><img src="assets/88.webp" width="128" alt="88API"></a>
-    </td>
-    <td>
-      <strong>88API｜无限画布</strong> 让各大主流模型能力结合得更紧密。 🎨 支持 <strong>GPT-Image、Gemini、Grok</strong> 等图片模型；🎬 支持 <strong>Seedance、Wan、H3、Kling、Grok</strong> 等视频模型；🎙️ 支持 <strong>Whisper、TTS</strong> 等语音能力。从文案、出图、改图，到视频生成与配音，一张画布串联完整创作链路。不只是模型聚合，更让不同模型在同一工作流中真正协同。 🎁 通过 <a href="https://88api.ai/sign-up?aff=25ty">无限画布专属链接注册</a>，即可领取赠送额度及专属优惠。
-    </td>
-  </tr>
-  <tr>
-    <td width="190" align="center">
-      <a href="https://metaso.cn/minimax-h3/?s=tt" target="_blank" rel="noopener"><img src="assets/metaso.png" width="163" alt="秘塔科技"></a>
-    </td>
-    <td>
-      <strong>MiniMax H3 视频生成 API｜秘塔科技</strong> 秘塔科技提供高性价比的 MiniMax H3 视频生成服务：<strong>768P 仅 0.09 元/秒，2K 仅 0.15 元/秒</strong>。支持原生 2K、音画同步，API 兼容 <strong>OpenAI 协议</strong>，同时支持 <strong>ComfyUI</strong>，无需自行部署 GPU。 🎁 通过 <a href="https://metaso.cn/minimax-h3/?s=tt" target="_blank" rel="noopener noreferrer">无限画布专属链接注册</a>，即可领取赠送额度及专属优惠。
-    </td>
-  </tr>
-</table>
+## 桌面版（推荐）
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/tigerowo/cdn-tdeh/v0.5/img/infinite-canvas/3ddirectortl.webp" alt="3D 导演台时间轴" />
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/tigerowo/cdn-tdeh/v0.4/img/infinite-canvas/3ddirector.webp" alt="3D 导演台" />
-</p>
-<p align="center">
-  <img src="https://gcore.jsdelivr.net/gh/tigerowo/cdn-tdeh@v0.4/img/infinite-canvas/agent.webp" alt="Agent" />
-</p>
-<p align="center">
-  <img src="https://raw.githubusercontent.com/tigerowo/cdn-tdeh/v0.4/img/infinite-canvas/panorama.webp" alt="全景图生成" />
-</p>
+Windows 单文件版本，前端、后端、静态资源全部内嵌在一个 exe 里，双击即用，不需要装 Node、Go 或数据库。
 
-本项目基于 [basketikun(纯前端)](https://github.com/basketikun/infinite-canvas) 为底，合并 [HuFakai](https://github.com/HuFakai/infinite-canvas) 生图增强版基础上，针对视频和视频生成逻辑配置更加完善，完善后端云同步机制，不再依赖纯前端
+1. 从仓库 Releases 的 `desktop-latest` 下载 `infinite-canvas-desktop.exe`；
+2. 放到一个**有写权限**的目录（不要放 `C:\Program Files`），双击运行；
+3. 首次启动会生成同级的 `userdata/` 目录，画布数据、图片本体、网页缓存都存在这里，不再占用 C 盘。
 
-> [!CAUTION]
-> 项目目前处于开发阶段，不保证历史数据兼容。各种数据库结构和存储格式都可能直接调整，欢迎关注后续更新
->
-> 如果你需要稳定维护自己的分支，建议自行 fork 后独立开发。二次开发与 PR 请保留原作者信息和前端页面标识
+运行时会在 `127.0.0.1` 上起一个本地服务，默认端口 `36512`，并把端口记在 `desktop-port.txt` 里。**端口就是本地数据的身份**，每次启动会尽量复用同一个端口，请不要随手改动。需要强制指定端口时，设置环境变量 `CANVAS_DESKTOP_PORT`。
 
-## 核心功能
+## 首次使用
 
-- Agent：围绕选中节点和上游节点分析、规划并生成图片或视频，支持选择 Skill 指导当前创作任务，并将结果插回画布
-- 全景图：支持文字生成、参考图生成和本地 2:1 全景图导入，可作为导演台的场景环境背景
-- 导演台：在独立 3D 场景中布置角色、模型、全景环境和机位，支持镜头管理、截图，并将机位画面自动发送为连线图片节点
-- 摄像机控制：图片、视频和生成配置节点支持独立设置相机、镜头、焦距和光圈，将镜头参数自动写入生成提示词，并随节点保存和复制
-- 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出
-- AI 创作：支持 OpenAI 兼容接口的 Images API、Responses API、图生图、参考图编辑、流式接收、Base64 图片返回；Seedance 2.0 可通过火山方舟 Agent Plan 接入
-- 生图工作台：支持侧边/悬浮底部工作台、多任务并发、历史结果合并展示、分类管理、失败详情、参考图缩略图、图片体积展示和“我的素材”复用
-- 创作工作流：支持公开/个人模板、变量表单、AI 创建工作流、单图/多图系列工作流、参考图输入和结果自动进入生图历史
-- 提示词库：抓取多个 GitHub 开源项目，按案例整理数百个图片提示词
-- 提示词与素材：提示词库、服务器素材库和“我的素材”可在生图、画布 AI 和工作流中复用
+1. 点右上角齿轮「设置」，在「渠道模式」里填一个可用的模型渠道（Base URL + API Key），或选择一个已有的自定义工作流渠道；
+2. 回到画布列表，新建一个画布；
+3. 把图片直接拖进画布，或双击空白处新建节点，或用左下角工具栏添加文本 / 图片节点；
+4. 选中节点，在下方提示词框输入内容，回车或点右下角生成；
+5. 想把某张图当参考：把节点连到目标节点上，或从目标节点的「参考内容」里点「+」选择；
+6. 结果不满意时直接改提示词再点生成——**同一个节点会被重新生成**；想保留旧结果请先「创造副本」（`Ctrl / Cmd + D`）。
 
-完整功能说明见 [docs/features.md](docs/overview/features.md)
+## 从源码运行
 
-如果你在为担心没有合适的生图API来发愁，可以查看该免费生图项目：[chatgpt2api](https://github.com/basketikun/chatgpt2api)
-
-## 技术栈
-
-- 前端：Next.js、React、TypeScript、Tailwind CSS、Ant Design、Zustand、TanStack Query
-- 后端：Go、Gin、GORM
-- 存储：SQLite、本地 IndexedDB、S3 兼容对象存储、Cloudflare R2  
-- 部署：Docker
-
-## 快速开始
+需要 Go 1.25+、Bun、Node 20+。
 
 ```bash
-git clone https://github.com/tigerowo/infinite-canvas.git
-cd infinite-canvas
-cp .env.example .env
-# 修改默认账号密码等信息
-docker compose up -d --build
-```
-
-本地非 Docker 开发运行：
-```bash
-cp .env.example .env
+# 后端（仓库根目录）
 go run .
 
-# 另开一个终端窗口
+# 前端（另开一个终端）
 cd web
 bun install
-bun run dev
+bun run dev        # http://localhost:3000
 ```
 
-本地源码构建运行：
+打包桌面版（静态导出后由 Go 内嵌成单文件 exe）：
 
 ```bash
-cp .env.example .env
-docker compose -f docker-compose.local.yml up -d --build
+cd web && BUILD_DESKTOP=1 bunx next build && cd ..
+rm -rf desktop/dist && cp -r web/out desktop/dist
+go build -o infinite-canvas-desktop.exe ./desktop
 ```
 
-运行后默认端口3000，可访问 `http://localhost:3000`
+仓库已配置 GitHub Actions：推送到 `main` 会自动构建 `infinite-canvas-desktop.exe` 并更新到 `desktop-latest` 发布页，本地不装 Go 也能拿到可执行文件。
 
-如需要拉取提示词，可前往:`http://localhost:3000/admin/prompts`
+## 数据工程：换电脑不丢图
 
-## New API 自动配置
+设置 → 数据工程，导出有两种模式：
 
-如果使用 New API，可在 `系统设置 -> 聊天方式 -> 添加聊天设置` 中填入：
+- **完整包**：所有图片本体都打进压缩包，体积大，换台电脑导入即可接着用；
+- **引用包**：只导出画布 JSON 和每张图片的 `storageKey / MD5 / 文件名` 清单，体积几百 KB，适合自己同步画布结构。
 
-```text
-https://infinite-canvas-cpco.onrender.com?apiKey={key}&baseUrl={address}
+导入引用包时，软件会逐个检查图片在本机是否已存在：已有的直接用，缺失的列在「缺失图片补齐」里，点「选择文件」或「批量定位文件」把图片找回来（按 MD5、文件名、大小自动匹配）。补齐后画布会自动恢复。
+
+## 数据都存在哪
+
+| 内容 | 位置 |
+| --- | --- |
+| 画布项目、节点、图片 blob、网页缓存 | 桌面版：exe 同级 `userdata/`；浏览器版：浏览器 IndexedDB |
+| 模型渠道与偏好配置 | 本地存储 `infinite-canvas:ai_config_store` |
+| 桌面版服务端口 | exe 同级 `desktop-port.txt` |
+| 后端数据（启用服务端能力时） | exe 同级 `data/` |
+
+从旧版本升级时，`%AppData%\<exe 名>` 下的旧数据会自动迁移到 `userdata/`；迁移失败会保留旧目录继续使用，不会丢数据。
+
+## 常见问题
+
+**画布是空白 / 图片显示"图片缺失"**
+多数是本地图片 blob 丢了。先确认没有清理过 `userdata/`；如果是导入的引用包，去设置里补齐缺失图片。
+
+**重启后画布列表空了**
+几乎都是端口变了（本地数据的身份随端口变化）。检查 `desktop-port.txt` 是否被删，或被别的程序抢占了端口，换回原端口再启动。
+
+**C 盘还是被占满**
+老版本把数据写在 `%AppData%`，新版已迁到 exe 同级 `userdata/`。确认 `userdata/` 已生成后，可手动删除旧目录 `C:\Users\<你>\AppData\Roaming\infinite-canvas-desktop.exe`。
+
+**生成报错 / 401**
+检查设置里的渠道 Base URL 与 Key；自定义工作流渠道还需要对应的 ComfyUI / AutoDL 服务在线。
+
+## 目录结构
+
+```
+├─ web/                        前端（Next.js App Router + React + Zustand + Tailwind）
+│  └─ src/app/(user)/canvas/   画布编辑器（节点、连线、面板、Agent）
+├─ desktop/                    桌面壳（Go + WebView2，内嵌静态导出产物）
+├─ handler/ service/ repository/ model/   后端（Go + Gin + GORM）
+├─ canvas-agent/               ComfyUI Bridge 等本地能力
+└─ docs/                       功能、进度与排查文档
 ```
 
-跳转后会自动打开配置弹窗并填入 API Key 和 Base URL。
-如果自己部署了，可以把 `https://infinite-canvas-cpco.onrender.com` 替换成你部署的地址。
+## 许可证
 
-## 效果展示
-
-<table width="100%">
-  <tr>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/d/7/c/d7cecc7df20fcd935ce760757f8799cf4436c936.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/6/0/7/607af375f9182a86f31655b8326337a536f70e34.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/6/e/6/6e60f82eec3602151abccc60fc4b55d028ac8415.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/8/b/a/8bae005a727727c8d83e0e01b05fea90155e56a5.jpeg" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/e/b/e/ebe20a7cb4c4837495cdbd55b4327fa741ce2938.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/0/f/b/0fbe4f543ac554a7950cf011ceb4586d27e6d681.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/MxXZkWc7/1.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/5g46rH3L/2.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/NfHpv5q/3.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/svXg7dPp/4.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://cdn3.ldstatic.com/original/4X/8/6/7/867532c5c6dfff38cfa2b90ca0e0f76809b066d4.png" alt="5" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/BHjjXcV4/6.png" alt="image" border="0"></td>
-  </tr>
-</table>
-
-## 文档
-
-- [功能介绍](docs/overview/features.md)
-- [部署说明](docs/overview/docker.md)
-- [画布节点操作手册](docs/canvas/canvas-node-manual.md)
-- [画布快捷键](docs/canvas/canvas-shortcuts.md)
-- [待办事项](docs/progress/todo.md)
-- [后端数据库说明](docs/backend/backend-database.md)
-- [系统配置数据结构](docs/backend/system-settings.md)
-- [接口响应约定](docs/backend/api-response.md)
-
-## 联系方式
-
-项目定制二次开发需求，广告赞助合作其他可联系
-
-邮箱：yhb293933@gmail.com
-
-微信交流测试群：
-<p align="center">
-  <img src="assets/wc.png" alt="微信群二维码" width="180">
-</p>
-
-## 赞助支持
-
-<div align="center">
-
-本项目长期开放广告赞助合作，欢迎品牌 / 产品投放
-
-如果这个项目对你有帮助，欢迎赞助支持，你的每一份鼓励都是持续更新的动力！
-
-</div>
-
-## 社区支持
-
-学 AI，上 L 站：[LinuxDO](https://linux.do/)
-
-## 开源协议
-
-本项目使用 GNU Affero General Public License v3.0，见 [LICENSE](LICENSE)。
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=tigerowo%2Finfinite-canvas&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&theme=dark&legend=top-left&sealed_token=SMYnxdZ99ogoiNPY5Qaeg1X9nB17KGpOCvv0Pzjz5mLCx5o7pNOpQNnYpk2CIUkdJMuAcxve8H_ZAYllKY4b7YTvZh0tiHoC8hGfknKnk2IUMYhQoIxgcQ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&legend=top-left&sealed_token=SMYnxdZ99ogoiNPY5Qaeg1X9nB17KGpOCvv0Pzjz5mLCx5o7pNOpQNnYpk2CIUkdJMuAcxve8H_ZAYllKY4b7YTvZh0tiHoC8hGfknKnk2IUMYhQoIxgcQ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tigerowo/infinite-canvas&type=date&legend=top-left&sealed_token=SMYnxdZ99ogoiNPY5Qaeg1X9nB17KGpOCvv0Pzjz5mLCx5o7pNOpQNnYpk2CIUkdJMuAcxve8H_ZAYllKY4b7YTvZh0tiHoC8hGfknKnk2IUMYhQoIxgcQ" />
- </picture>
-</a>
+AGPL-3.0，详见 [LICENSE](LICENSE)。

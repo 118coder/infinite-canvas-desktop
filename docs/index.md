@@ -20,14 +20,9 @@
 - [后端数据库说明](backend/backend-database.md)
 - [画布数据结构](backend/canvas-data-structure.md)
 
-## 商务合作
+## 开源协议
 
-- [开源协议](business/license.md)
-- [商务合作](business/business.md)
-
-## 赞助支持
-
-- [打赏支持](support/donate.md)
+- [AGPL-3.0](business/license.md)
 
 ## 项目进度
 
@@ -36,5 +31,5 @@
 
 ## 说明
 
-- 未登录时画布项目和“我的素材”保存在浏览器本地；登录且账号同步可用时，会同步保存到账号/云端。
-- 本地直连模式下，AI API Key 保存在浏览器本地，并由前端直接请求 OpenAI 兼容接口。
+- 画布项目和「我的素材」全部保存在本地（桌面版为 exe 同级 `userdata/`，浏览器版为 IndexedDB），不依赖账号。
+- AI API Key 保存在本地，由前端直接请求 OpenAI 兼容接口；桌面版不会上传任何数据。

@@ -19,10 +19,12 @@ type InfiniteCanvasProps = {
     onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
+    /** 视口层的浮层（空画布引导等），不随缩放平移 */
+    overlay?: React.ReactNode;
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", alignmentGuides = {}, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", alignmentGuides = {}, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, overlay, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -260,6 +262,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             >
                 {children}
             </div>
+            {overlay}
         </div>
     );
 }

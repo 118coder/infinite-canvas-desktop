@@ -74,6 +74,7 @@ export type DataPackageExportResult = {
 export type DataPackageImportResult = {
     mode: DataPackageMode;
     projects: number;
+    projectIds: string[];
     assets: number;
     logs: number;
     files: number;
@@ -254,7 +255,7 @@ export async function importDataPackage(file: File, onProgress?: ZipProgress): P
     saveRepairQueue(mergeRepairQueue(missing, available));
     onProgress?.("完成", 100);
 
-    return { mode, projects: projects.length, assets: assets.length, logs, files: available.size, missing };
+    return { mode, projects: projects.length, projectIds: projects.map((project) => project.id), assets: assets.length, logs, files: available.size, missing };
 }
 
 /* ---------------------------------- 缺失图片补齐 ---------------------------------- */
