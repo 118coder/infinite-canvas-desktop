@@ -34,6 +34,8 @@ type AssetStore = {
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     removeAsset: (id: string) => void;
+    removeAssets: (ids: string[]) => void;
+    updateAssets: (ids: string[], patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     cleanupImages: (extra?: unknown, storageKeys?: ReadonlyMap<string, string>, ownerToken?: string) => void;
 };
 
@@ -159,6 +161,18 @@ export const useAssetStore = create<AssetStore>()(
 
                     return { assets };
                 }),
+            removeAssets: (ids) => {
+                const unique = Array.from(new Set(ids));
+                unique.forEach((id) => get().removeAsset(id));
+            },
+            updateAssets: (ids, patch) => {
+                if (!ids.length) return;
+                const target = new Set(ids);
+                const now = new Date().toISOString();
+                set((state) => ({
+                    assets: state.assets.map((asset) => (target.has(asset.id) ? ({ ...asset, ...patch, updatedAt: now } as Asset) : asset)),
+                }));
+            },
             cleanupImages: (extra, storageKeys, ownerToken) => {
                 window.setTimeout(async () => {
                     const { useCanvasStore } = await import("@/app/(user)/canvas/stores/use-canvas-store");
