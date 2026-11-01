@@ -81,6 +81,7 @@ func main() {
 // 保证刷新或直接输入地址时页面可用。文件直接读取返回，避免 FileServer 对 index.html 的重定向。
 func desktopStaticHandler(dist fs.FS) gin.HandlerFunc {
 	serve := func(c *gin.Context, path string) bool {
+		path = strings.TrimPrefix(path, "/")
 		if path == "" {
 			return false
 		}
