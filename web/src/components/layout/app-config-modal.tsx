@@ -410,11 +410,13 @@ export function AppConfigModal() {
         const hide = message.loading("正在导入数据工程...", 0);
         try {
             const result = await importDataPackage(file);
-            message.success(`数据工程已导入：画布 ${result.projects} 个、素材 ${result.assets} 个、历史 ${result.logs} 条`);
+            hide();
+            message.success(`数据工程已导入（画布 ${result.projects} 个），正在刷新页面...`);
+            setTimeout(() => window.location.reload(), 1500);
         } catch (error) {
+            hide();
             message.error(error instanceof Error ? error.message : "导入数据工程失败");
         } finally {
-            hide();
             if (packageInputRef.current) packageInputRef.current.value = "";
         }
     };

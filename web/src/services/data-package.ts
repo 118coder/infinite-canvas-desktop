@@ -4,7 +4,7 @@ import localforage from "localforage";
 import { useCanvasStore, type CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { createZip, readZip } from "@/lib/zip";
 import { getMediaBlob, setMediaBlob, resolveMediaUrl } from "@/services/file-storage";
-import { getImageBlob, setImageBlob, resolveImageUrl } from "@/services/image-storage";
+import { getImageBlob, setImageBlob, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { defaultConfig, useConfigStore, type AiConfig } from "@/stores/use-config-store";
@@ -13,6 +13,9 @@ const DATA_PACKAGE_NAME = "data-package.json";
 const IMAGE_LOG_STORE = "image_generation_logs";
 const VIDEO_LOG_STORE = "video_generation_logs";
 const LOG_DB_NAME = "infinite-canvas";
+const CANVAS_STORE_IDB = "infinite-canvas";
+const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
+const CANVAS_LS_KEY = "infinite-canvas:ai_config_store";
 
 export type DataPackageFileEntry = { storageKey: string; path: string; mimeType: string; bytes: number };
 
@@ -58,7 +61,7 @@ export async function exportDataPackage() {
         zipFiles.push({ name: path, data: blob });
     }
 
-    const data: DataPackage = {
+    const pkg: DataPackage = {
         app: "infinite-canvas",
         kind: "data-package",
         version: 1,
@@ -71,36 +74,21 @@ export async function exportDataPackage() {
         videoLogs,
         files,
     };
-    const zip = await createZip([{ name: DATA_PACKAGE_NAME, data: JSON.stringify(data) }, ...zipFiles]);
+    const zip = await createZip([{ name: DATA_PACKAGE_NAME, data: JSON.stringify(pkg) }, ...zipFiles]);
     saveAs(zip, `画布数据工程-${new Date().toISOString().slice(0, 10)}.zip`);
     return { projects: projects.length, assets: assets.length, files: files.length };
 }
 
-// 导入数据工程：按 id 合并画布与素材（同 id 覆盖、其余保留），整体替换应用配置与本地 Skill，
-// 合并工作台历史记录，并恢复全部引用的本地文件。
-const importTrace = (message: string) => {
-    const host = window as unknown as { __importTrace?: string[] };
-    host.__importTrace = host.__importTrace || [];
-    host.__importTrace.push(`${new Date().toISOString().slice(11, 23)} ${message}`);
-};
-
-export async function importDataPackage(file: File) {
-    importTrace(`start ${file.name} ${file.size}`);
+// 导入数据工程：绕过 zustand store 直接写持久层（避免大 JSON 卡死主线程），
+// 把 base64 大图转为本地 blob 存储，恢复 blob 后修正旧会话死链接，最后刷新页面。
+export async function importDataPackage(file: File): Promise<{ projects: number; assets: number; logs: number }> {
     const zip = await readZip(file);
-    importTrace("zip read");
     const entry = zip.get(DATA_PACKAGE_NAME);
     if (!entry) throw new Error("不是有效的数据工程文件（缺少 data-package.json）");
     const data = JSON.parse(await entry.text()) as DataPackage;
     if (data.app !== "infinite-canvas" || data.kind !== "data-package") throw new Error("不是有效的数据工程文件");
-    importTrace("json parsed");
 
-    await Promise.all([
-        waitForStoreHydration(useCanvasStore),
-        waitForStoreHydration(useAssetStore),
-        waitForStoreHydration(useConfigStore),
-    ]);
-    importTrace(`stores hydrated (canvas=${useCanvasStore.persist.hasHydrated()} assets=${useAssetStore.persist.hasHydrated()} config=${useConfigStore.persist.hasHydrated()})`);
-
+    // 1. 恢复引用的图片和媒体 blob 到本地存储
     await Promise.all(
         (data.files || []).map(async (fileEntry) => {
             const blob = zip.get(fileEntry.path);
@@ -109,79 +97,110 @@ export async function importDataPackage(file: File) {
             await (fileEntry.storageKey.startsWith("image:") ? setImageBlob(fileEntry.storageKey, typed) : setMediaBlob(fileEntry.storageKey, typed));
         }),
     );
-    importTrace(`files restored (${data.files?.length || 0})`);
 
-    if (Array.isArray(data.projects)) {
-        // 恢复 blob 后，把节点 content 里的旧会话死链接替换为新会话可用地址
-        const fixedProjects = await Promise.all(
-            data.projects.map(async (project) => ({
-                ...project,
-                nodes: await Promise.all(
-                    (project.nodes || []).map(async (node: CanvasProject["nodes"][number]) => {
-                        if (!node.metadata) return node;
-                        const sk = node.metadata.storageKey;
-                        const content = node.metadata.content;
-                        if (!sk || !content) return node;
-                        if (content.startsWith("blob:") || content.startsWith("http:") && content.includes("127.0.0.1")) {
-                            const isImage = sk.startsWith("image:");
-                            const fresh = isImage ? await resolveImageUrl(sk, "") : await resolveMediaUrl(sk, "");
-                            if (fresh && fresh !== content) {
-                                return { ...node, metadata: { ...node.metadata, content: fresh } };
-                            }
-                        }
-                        return node;
-                    }),
-                ),
-            })),
-        );
-        const canvasStore = useCanvasStore.getState();
-        const currentProjects = canvasStore.projects;
-        const importedIds = new Set(fixedProjects.map((project) => project.id));
-        const merged = [...currentProjects.filter((project) => !importedIds.has(project.id)), ...fixedProjects].sort(
-            (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
-        );
-        useCanvasStore.setState({ projects: merged });
-        importTrace(`projects set (${merged.length})`);
-    }
+    // 2. 修正节点 content：把旧会话死链接替换为新地址，base64 大图转为本地存储
+    const projects = (data.projects || []).map((project) => ({
+        ...project,
+        nodes: (project.nodes || []).map((node) => ({ ...node, metadata: fixNodeMetadata(node.metadata) })),
+    }));
 
-    if (Array.isArray(data.assets)) {
+    // 3. 修正素材 content
+    const assets = (data.assets || []).map((asset) => ({ ...asset }));
+
+    // 4. 直接写画布项目到 IndexedDB（绕过 zustand 避免 28MB JSON.stringify 卡死）
+    const existingProjects = await readCanvasProjectsFromIdb();
+    const importedIds = new Set(projects.map((p) => p.id));
+    const mergedProjects = [...existingProjects.filter((p) => !importedIds.has(p.id)), ...projects].sort(
+        (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
+    );
+    await writeCanvasProjectsToIdb(mergedProjects);
+
+    // 5. 直接写素材到 IndexedDB
+    if (Array.isArray(data.assets) && data.assets.length) {
         const assetStore = useAssetStore.getState();
-        const importedIds = new Set(data.assets.map((asset) => asset.id));
-        const merged = [...assetStore.assets.filter((asset) => !importedIds.has(asset.id)), ...data.assets].sort(
+        const importedAssetIds = new Set(assets.map((a) => a.id));
+        const mergedAssets = [...assetStore.assets.filter((a) => !importedAssetIds.has(a.id)), ...assets].sort(
             (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
         );
-        useAssetStore.setState({ assets: merged });
-        importTrace(`assets set (${merged.length})`);
+        useAssetStore.setState({ assets: mergedAssets });
     }
 
+    // 6. 直接写配置到 localStorage
     if (data.config && typeof data.config === "object") {
-        useConfigStore.setState({ config: { ...defaultConfig, ...data.config } });
-        importTrace("config set");
+        const merged = { ...defaultConfig, ...data.config };
+        localStorage.setItem(CANVAS_LS_KEY, JSON.stringify({ state: { config: merged }, version: 0 }));
     }
 
-    if (Array.isArray(data.skills)) {
+    // 7. 恢复本地 Skill
+    if (Array.isArray(data.skills) && data.skills.length) {
         await localforage.createInstance({ name: LOG_DB_NAME, storeName: "agent_skills" }).setItem("items", data.skills);
-        await useAgentSkillStore.getState().loadSkills();
-        importTrace("skills set");
     }
 
-    const restoredLogs = await writeStoreEntries(IMAGE_LOG_STORE, data.imageLogs) + await writeStoreEntries(VIDEO_LOG_STORE, data.videoLogs);
-    importTrace(`logs set (${restoredLogs})`);
-    return { projects: data.projects?.length || 0, assets: data.assets?.length || 0, logs: restoredLogs };
+    // 8. 恢复生成历史
+    const logsWritten = await writeStoreEntries(IMAGE_LOG_STORE, data.imageLogs) + await writeStoreEntries(VIDEO_LOG_STORE, data.videoLogs);
+
+    return { projects: projects.length, assets: assets.length, logs: logsWritten };
 }
 
-// 调试句柄：在浏览器控制台可用 window.__importDebug 直接调用导入/导出
-if (typeof window !== "undefined") {
-    (window as unknown as Record<string, unknown>).__importDebug = { importDataPackage, exportDataPackage };
+// 修正节点 metadata：死 blob 链接 → 新地址，base64 大图 → 本地存储
+async function fixNodeMetadata(metadata: CanvasProject["nodes"][number]["metadata"]): Promise<CanvasProject["nodes"][number]["metadata"]> {
+    if (!metadata) return metadata;
+    const content = metadata.content;
+    if (!content) return metadata;
+    const sk = metadata.storageKey;
+
+    // base64 大图 → 上传到本地 IndexedDB 并用 fresh blob URL 替换
+    if (content.startsWith("data:image/") && content.length > 10000) {
+        try {
+            const stored = await uploadImage(content, { localOnly: true });
+            return { ...metadata, content: stored.url, storageKey: stored.storageKey, bytes: stored.bytes, mimeType: stored.mimeType };
+        } catch { return metadata; }
+    }
+
+    // 旧会话 blob: 死链接 → 从本地存储重新解析
+    if (sk && (content.startsWith("blob:") || (content.startsWith("http:") && content.includes("127.0.0.1")))) {
+        try {
+            const fresh = sk.startsWith("image:") ? await resolveImageUrl(sk, "") : await resolveMediaUrl(sk, "");
+            if (fresh && fresh !== content) return { ...metadata, content: fresh };
+        } catch { /* 保持原值 */ }
+    }
+    return metadata;
 }
 
-async function waitForStoreHydration(store: { persist: { hasHydrated: () => boolean; onFinishHydration: (callback: () => void) => () => void } }) {
-    if (store.persist.hasHydrated()) return;
-    await new Promise<void>((resolve) => {
-        const unsubscribe = store.persist.onFinishHydration(() => {
-            unsubscribe();
-            resolve();
+// 直接读写 canvas store 的 IndexedDB 持久层
+async function readCanvasProjectsFromIdb(): Promise<CanvasProject[]> {
+    try {
+        const db = await openIdb(CANVAS_STORE_IDB);
+        const value = await new Promise<string | null>((resolve) => {
+            const req = db.transaction("app_state", "readonly").objectStore("app_state").get(CANVAS_STORE_KEY);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
         });
+        db.close();
+        if (!value) return [];
+        const parsed = JSON.parse(value);
+        return parsed?.state?.projects || [];
+    } catch {
+        return [];
+    }
+}
+
+async function writeCanvasProjectsToIdb(projects: CanvasProject[]) {
+    const db = await openIdb(CANVAS_STORE_IDB);
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction("app_state", "readwrite");
+        tx.objectStore("app_state").put(JSON.stringify({ state: { projects }, version: 0 }), CANVAS_STORE_KEY);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+}
+
+function openIdb(name: string): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(name);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
     });
 }
 
@@ -222,4 +241,9 @@ function collectStorageKeys(value: unknown, keys = new Set<string>()) {
 
 function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_");
+}
+
+// 调试句柄：在浏览器控制台可用 window.__importDebug 直接调用导入/导出
+if (typeof window !== "undefined") {
+    (window as unknown as Record<string, unknown>).__importDebug = { importDataPackage, exportDataPackage };
 }
