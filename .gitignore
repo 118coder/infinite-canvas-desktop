@@ -16,3 +16,7 @@ infinite-canvas-desktop.exe
 desktop/dist/
 !desktop/dist/.gitkeep
 web/tsconfig.tsbuildinfo
+debug_pkg/
+test_package.zip
+desktop_url.txt
+desktop_test.log

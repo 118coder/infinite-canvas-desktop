@@ -148,6 +148,11 @@ export async function importDataPackage(file: File) {
     return { projects: data.projects?.length || 0, assets: data.assets?.length || 0, logs: restoredLogs };
 }
 
+// 调试句柄：在浏览器控制台可用 window.__importDebug 直接调用导入/导出
+if (typeof window !== "undefined") {
+    (window as unknown as Record<string, unknown>).__importDebug = { importDataPackage, exportDataPackage };
+}
+
 async function waitForStoreHydration(store: { persist: { hasHydrated: () => boolean; onFinishHydration: (callback: () => void) => () => void } }) {
     if (store.persist.hasHydrated()) return;
     await new Promise<void>((resolve) => {
