@@ -55,7 +55,13 @@ func main() {
 	engine := router.New()
 	engine.NoRoute(desktopStaticHandler(dist))
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	// 默认由系统分配随机空闲端口，避免与其它本机程序（如游戏）冲突；
+	// 需要固定端口时设置环境变量 CANVAS_DESKTOP_PORT（如 36512）
+	listenAddr := "127.0.0.1:0"
+	if port := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_PORT")); port != "" {
+		listenAddr = "127.0.0.1:" + port
+	}
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
