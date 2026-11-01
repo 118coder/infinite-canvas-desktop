@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tigerowo/infinite-canvas/config"
@@ -70,20 +72,18 @@ func main() {
 }
 
 // desktopStaticHandler 优先返回命中的静态文件；未命中时按 Next 静态导出的文件名规则回退，
-// 保证刷新或直接输入地址时页面可用。
+// 保证刷新或直接输入地址时页面可用。文件直接读取返回，避免 FileServer 对 index.html 的重定向。
 func desktopStaticHandler(dist fs.FS) gin.HandlerFunc {
-	fileServer := http.FileServer(http.FS(dist))
-	try := func(c *gin.Context, path string) bool {
-		path = strings.TrimPrefix(path, "/")
+	serve := func(c *gin.Context, path string) bool {
 		if path == "" {
 			return false
 		}
-		if stat, err := fs.Stat(dist, path); err == nil && !stat.IsDir() {
-			c.Request.URL.Path = "/" + path
-			fileServer.ServeHTTP(c.Writer, c.Request)
-			return true
+		data, err := fs.ReadFile(dist, path)
+		if err != nil {
+			return false
 		}
-		return false
+		http.ServeContent(c.Writer, c.Request, filepath.Base(path), time.Time{}, bytes.NewReader(data))
+		return true
 	}
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -91,9 +91,11 @@ func desktopStaticHandler(dist fs.FS) gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{"code": 1, "data": nil, "msg": "接口不存在"})
 			return
 		}
-		candidates := []string{path, path + ".html", filepath.ToSlash(filepath.Join(path, "index.html"))}
-		for _, candidate := range candidates {
-			if try(c, candidate) {
+		if serve(c, strings.TrimPrefix(path, "/")) {
+			return
+		}
+		for _, candidate := range []string{path + ".html", path + "/index.html"} {
+			if serve(c, candidate) {
 				return
 			}
 		}
@@ -102,7 +104,7 @@ func desktopStaticHandler(dist fs.FS) gin.HandlerFunc {
 		if strings.HasPrefix(path, "/canvas") {
 			fallback = "/canvas.html"
 		}
-		if !try(c, fallback) {
+		if !serve(c, fallback) {
 			c.JSON(http.StatusNotFound, gin.H{"code": 1, "data": nil, "msg": "页面不存在"})
 		}
 	}
