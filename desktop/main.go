@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	webview2 "github.com/jchv/go-webview2"
 	"github.com/tigerowo/infinite-canvas/config"
 	"github.com/tigerowo/infinite-canvas/handler"
 	"github.com/tigerowo/infinite-canvas/router"
@@ -28,6 +29,9 @@ import (
 var distFS embed.FS
 
 func main() {
+	// WebView2 窗口必须运行在主 OS 线程
+	runtime.LockOSThread()
+
 	// 数据目录锚定到 exe 所在目录，保证便携性
 	if exePath, err := os.Executable(); err == nil {
 		_ = os.Chdir(filepath.Dir(exePath))
@@ -70,10 +74,62 @@ func main() {
 		log.Fatal("unexpected listener address")
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d", tcpAddr.Port)
-	log.Printf("无限画布桌面版已启动：%s", url)
+
+	go func() {
+		if err := http.Serve(listener, engine); err != nil {
+			log.Printf("服务退出：%v", err)
+		}
+	}()
+	waitForServer(url)
+
+	// 独立应用窗口（WebView2）；不可用时回退系统浏览器
+	if openWindow(url) {
+		log.Printf("无限画布桌面版已启动：%s", url)
+		return
+	}
+	log.Printf("WebView2 不可用，已回退浏览器模式：%s", url)
 	openBrowser(url)
-	if err := http.Serve(listener, engine); err != nil {
-		log.Fatal(err)
+	select {} // 保持服务运行
+}
+
+// openWindow 打开独立应用窗口并阻塞直到窗口关闭；WebView2 初始化失败时返回 false
+func openWindow(url string) (opened bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("WebView2 初始化失败：%v", r)
+			opened = false
+		}
+	}()
+	w := webview2.NewWithOptions(webview2.WebViewOptions{
+		Debug:     false,
+		AutoFocus: true,
+		WindowOptions: webview2.WindowOptions{
+			Title:  "无限画布",
+			Width:  1440,
+			Height: 900,
+			Center: true,
+		},
+	})
+	if w == nil {
+		return false
+	}
+	w.SetTitle("无限画布")
+	w.Navigate(url)
+	w.Run()
+	w.Destroy()
+	return true
+}
+
+// waitForServer 轮询等待本地服务就绪，最多 10 秒
+func waitForServer(url string) {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url + "/api/health")
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
