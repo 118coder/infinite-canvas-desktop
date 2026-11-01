@@ -78,18 +78,28 @@ export async function exportDataPackage() {
 
 // 导入数据工程：按 id 合并画布与素材（同 id 覆盖、其余保留），整体替换应用配置与本地 Skill，
 // 合并工作台历史记录，并恢复全部引用的本地文件。
+const importTrace = (message: string) => {
+    const host = window as unknown as { __importTrace?: string[] };
+    host.__importTrace = host.__importTrace || [];
+    host.__importTrace.push(`${new Date().toISOString().slice(11, 23)} ${message}`);
+};
+
 export async function importDataPackage(file: File) {
+    importTrace(`start ${file.name} ${file.size}`);
     const zip = await readZip(file);
+    importTrace("zip read");
     const entry = zip.get(DATA_PACKAGE_NAME);
     if (!entry) throw new Error("不是有效的数据工程文件（缺少 data-package.json）");
     const data = JSON.parse(await entry.text()) as DataPackage;
     if (data.app !== "infinite-canvas" || data.kind !== "data-package") throw new Error("不是有效的数据工程文件");
+    importTrace("json parsed");
 
     await Promise.all([
         waitForStoreHydration(useCanvasStore),
         waitForStoreHydration(useAssetStore),
         waitForStoreHydration(useConfigStore),
     ]);
+    importTrace(`stores hydrated (canvas=${useCanvasStore.persist.hasHydrated()} assets=${useAssetStore.persist.hasHydrated()} config=${useConfigStore.persist.hasHydrated()})`);
 
     await Promise.all(
         (data.files || []).map(async (fileEntry) => {
@@ -99,6 +109,7 @@ export async function importDataPackage(file: File) {
             await (fileEntry.storageKey.startsWith("image:") ? setImageBlob(fileEntry.storageKey, typed) : setMediaBlob(fileEntry.storageKey, typed));
         }),
     );
+    importTrace(`files restored (${data.files?.length || 0})`);
 
     if (Array.isArray(data.projects)) {
         const canvasStore = useCanvasStore.getState();
@@ -108,6 +119,7 @@ export async function importDataPackage(file: File) {
             (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
         );
         useCanvasStore.setState({ projects: merged });
+        importTrace(`projects set (${merged.length})`);
     }
 
     if (Array.isArray(data.assets)) {
@@ -117,18 +129,22 @@ export async function importDataPackage(file: File) {
             (a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""),
         );
         useAssetStore.setState({ assets: merged });
+        importTrace(`assets set (${merged.length})`);
     }
 
     if (data.config && typeof data.config === "object") {
         useConfigStore.setState({ config: { ...defaultConfig, ...data.config } });
+        importTrace("config set");
     }
 
     if (Array.isArray(data.skills)) {
         await localforage.createInstance({ name: LOG_DB_NAME, storeName: "agent_skills" }).setItem("items", data.skills);
         await useAgentSkillStore.getState().loadSkills();
+        importTrace("skills set");
     }
 
     const restoredLogs = await writeStoreEntries(IMAGE_LOG_STORE, data.imageLogs) + await writeStoreEntries(VIDEO_LOG_STORE, data.videoLogs);
+    importTrace(`logs set (${restoredLogs})`);
     return { projects: data.projects?.length || 0, assets: data.assets?.length || 0, logs: restoredLogs };
 }
 

@@ -1,0 +1,25 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 13099897168,
+      "node_id": "MDg6QXJ0aWZhY3QxMzA5OTg5NzE2OA==",
+      "name": "infinite-canvas-desktop",
+      "size_in_bytes": 25853183,
+      "url": "https://api.github.com/repos/118coder/infinite-canvas-desktop/actions/artifacts/13099897168",
+      "archive_download_url": "https://api.github.com/repos/118coder/infinite-canvas-desktop/actions/artifacts/13099897168/zip",
+      "expired": false,
+      "digest": "sha256:5dd8167a8e5b24c8ba4f55832ed92867b64fd7a81c157e5e647e5700ad931411",
+      "created_at": "2026-11-01T20:34:42Z",
+      "updated_at": "2026-11-01T20:34:42Z",
+      "expires_at": "2027-01-30T20:33:11Z",
+      "workflow_run": {
+        "id": 41347436266,
+        "repository_id": 1442164399,
+        "head_repository_id": 1442164399,
+        "head_branch": "main",
+        "head_sha": "0c42e372c4258885f9384b81954f1b1894aff942"
+      }
+    }
+  ]
+}
