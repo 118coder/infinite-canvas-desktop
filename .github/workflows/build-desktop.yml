@@ -1,0 +1,57 @@
+name: Build Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build frontend (static export)
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run build:bridge
+          mv src/app/api src/app/_api
+          BUILD_DESKTOP=1 bunx next build
+          mv src/app/_api src/app/api
+
+      - name: Collect static output
+        run: |
+          rm -rf desktop/dist
+          cp -r web/out desktop/dist
+
+      - name: Build Windows executable
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o infinite-canvas-desktop.exe ./desktop
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infinite-canvas-desktop
+          path: infinite-canvas-desktop.exe
+
+      - name: Attach to rolling release
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: 桌面版（自动构建）
+          prerelease: true
+          files: infinite-canvas-desktop.exe
+          overwrite_files: true

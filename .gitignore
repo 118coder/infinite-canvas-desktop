@@ -1,0 +1,18 @@
+.next/
+out/
+node_modules/
+.env*
+!.env.example
+data/
+/director/
+*.log
+*.tsbuildinfo
+web/public/InfiniteCanvas-ComfyBridge*
+.DS_Store
+.idea
+
+# 桌面版构建产物
+infinite-canvas-desktop.exe
+desktop/dist/
+!desktop/dist/.gitkeep
+web/tsconfig.tsbuildinfo
