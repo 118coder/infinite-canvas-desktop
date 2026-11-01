@@ -21,4 +21,5 @@ test_package.zip
 test_import.zip
 desktop_url.txt
 desktop-port.txt
+userdata/
 desktop_test.log
