@@ -25,6 +25,7 @@ jobs:
       - name: Build frontend (static export)
         working-directory: web
         run: |
+          rm -rf .next out node_modules
           bun install --frozen-lockfile
           bun run build:bridge
           mv src/app/api src/app/_api

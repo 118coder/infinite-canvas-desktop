@@ -10,7 +10,7 @@ import { GrokTtsVoiceSelect } from "@/components/grok-tts-voice-select";
 import { MiniMaxTtsVoiceSelect } from "@/components/minimax-tts-voice-select";
 import { ModelPicker } from "@/components/model-picker";
 import { fetchImageModels } from "@/services/api/image";
-import { exportDataPackage, importDataPackage } from "@/services/data-package";
+import { exportDataPackage, importDataPackage, loadRepairQueue, repairMissingMedia, resolveRepairedProjects, saveRepairQueue, type DataPackageMode, type MissingMediaEntry } from "@/services/data-package";
 import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncUserStorageProvider } from "@/services/api/user-config";
 import { clearStorageConfigCache as clearFileStorageCache } from "@/services/file-storage";
 import { clearStorageConfigCache as clearImageStorageCache, defaultUserStorageProvider, defaultUserWebDAVStorageProvider, loadStorageConfig, loadUserS3StorageProvider, loadUserWebDAVStorageProvider, saveUserStorageProvider, saveUserWebDAVStorageProvider, type UserStorageProvider } from "@/services/image-storage";
@@ -65,7 +65,12 @@ export function AppConfigModal() {
     const [storageUsageText, setStorageUsageText] = useState("");
     const [webDAVStorageUsageText, setWebDAVStorageUsageText] = useState("");
     const [packaging, setPackaging] = useState(false);
+    const [packagingMode, setPackagingMode] = useState<DataPackageMode | null>(null);
+    const [repairQueue, setRepairQueue] = useState<MissingMediaEntry[]>([]);
+    const [repairing, setRepairing] = useState(false);
     const packageInputRef = useRef<HTMLInputElement>(null);
+    const repairInputRef = useRef<HTMLInputElement>(null);
+    const repairTargetRef = useRef("");
     const config = useConfigStore((state) => state.config);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
@@ -183,6 +188,12 @@ export function AppConfigModal() {
         return () => {
             canceled = true;
         };
+    }, [isConfigOpen]);
+
+    // 打开设置时刷新"缺失图片"清单（引用包导入后留下的待补齐项）
+    useEffect(() => {
+        if (!isConfigOpen) return;
+        setRepairQueue(loadRepairQueue());
     }, [isConfigOpen]);
 
     const finishConfig = async () => {
@@ -393,15 +404,18 @@ export function AppConfigModal() {
     };
 
 
-    const handleExportPackage = async () => {
+    const handleExportPackage = async (mode: DataPackageMode = "full") => {
         setPackaging(true);
+        setPackagingMode(mode);
         try {
-            const result = await exportDataPackage();
-            message.success(`已导出数据工程：画布 ${result.projects} 个、素材 ${result.assets} 个、文件 ${result.files} 个`);
+            const result = await exportDataPackage(mode);
+            const label = mode === "reference" ? "引用包" : "完整包";
+            message.success(`已导出${label}：画布 ${result.projects} 个、素材 ${result.assets} 个、图片清单 ${result.files} 项，约 ${formatBytes(result.bytes)}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "导出数据工程失败");
         } finally {
             setPackaging(false);
+            setPackagingMode(null);
         }
     };
 
@@ -411,13 +425,57 @@ export function AppConfigModal() {
         try {
             const result = await importDataPackage(file);
             hide();
-            message.success(`数据工程已导入（画布 ${result.projects} 个），正在刷新页面...`);
-            setTimeout(() => window.location.reload(), 1500);
+            const label = result.mode === "reference" ? "引用包" : "完整包";
+            setRepairQueue(loadRepairQueue());
+            if (result.missing.length) {
+                message.warning(`已导入${label}：画布 ${result.projects} 个、媒体 ${result.files} 个；有 ${result.missing.length} 张图片本机缺失，请在下方「缺失图片补齐」中定位文件`);
+                return;
+            }
+            message.success(`数据工程已导入（${label}，画布 ${result.projects} 个、媒体 ${result.files} 个），正在刷新页面...`);
+            setTimeout(() => window.location.reload(), 1200);
         } catch (error) {
             hide();
             message.error(error instanceof Error ? error.message : "导入数据工程失败");
         } finally {
             if (packageInputRef.current) packageInputRef.current.value = "";
+        }
+    };
+
+    const handlePickRepairFile = (storageKey: string) => {
+        repairTargetRef.current = storageKey;
+        repairInputRef.current?.click();
+    };
+
+    const handlePickRepairBatch = () => {
+        repairTargetRef.current = "";
+        repairInputRef.current?.click();
+    };
+
+    const handleRepairFiles = async (files?: FileList | null) => {
+        const list = Array.from(files || []);
+        if (!list.length) return;
+        setRepairing(true);
+        try {
+            // 单个文件时按用户点的行强制匹配，多选时靠 MD5 / 文件名 / 大小自动配对
+            const result = await repairMissingMedia(list, list.length === 1 ? repairTargetRef.current || undefined : undefined);
+            setRepairQueue(result.remaining);
+            if (!result.repaired.length) {
+                message.error("没有匹配到缺失图片，请确认选择了对应的文件");
+                return;
+            }
+            await resolveRepairedProjects(result.repaired);
+            if (result.unmatched) message.warning(`已补齐 ${result.repaired.length} 张，另有 ${result.unmatched} 个文件未匹配`);
+            else message.success(`已补齐 ${result.repaired.length} 张图片`);
+            if (!result.remaining.length) {
+                message.success("缺失图片已全部补齐，正在刷新画布...");
+                setTimeout(() => window.location.reload(), 1200);
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "补齐图片失败");
+        } finally {
+            setRepairing(false);
+            repairTargetRef.current = "";
+            if (repairInputRef.current) repairInputRef.current.value = "";
         }
     };
 
@@ -638,12 +696,16 @@ export function AppConfigModal() {
                             <div className="min-w-0">
                                 <div className="text-sm font-medium">数据工程</div>
                                 <div className="mt-1 text-xs text-stone-500">
-                                    导出全部画布、我的素材、渠道配置、本地 Agent Skill、生成历史及引用的图片媒体文件；在其他电脑打开「设置 → 数据工程 → 导入数据工程」即可恢复使用。
+                                    完整包导出画布、素材、渠道配置、本地 Skill、生成历史以及全部图片本体，换机导入即可开箱即用；
+                                    引用包只导出画布 JSON + 每张图片的 storageKey / MD5 / 文件名清单，体积几百 KB，图片需要在本机补齐。
                                 </div>
                             </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                                <Button size="small" loading={packaging} onClick={() => void handleExportPackage()}>
-                                    导出数据工程
+                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                <Button size="small" loading={packaging && packagingMode === "full"} onClick={() => void handleExportPackage("full")}>
+                                    导出完整包
+                                </Button>
+                                <Button size="small" loading={packaging && packagingMode === "reference"} onClick={() => void handleExportPackage("reference")}>
+                                    导出引用包
                                 </Button>
                                 <Button size="small" onClick={() => packageInputRef.current?.click()}>
                                     导入数据工程
@@ -651,6 +713,51 @@ export function AppConfigModal() {
                             </div>
                         </div>
                         <input ref={packageInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void handleImportPackage(event.target.files?.[0])} />
+                        {repairQueue.length ? (
+                            <div className="mt-3 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                                        缺失图片 {repairQueue.length} 张（storageKey 在本地不存在）
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-2">
+                                        <Button size="small" loading={repairing} onClick={handlePickRepairBatch}>
+                                            批量定位文件
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            type="text"
+                                            onClick={() => {
+                                                saveRepairQueue([]);
+                                                setRepairQueue([]);
+                                            }}
+                                        >
+                                            忽略
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="mt-2 max-h-56 space-y-1 overflow-auto pr-1">
+                                    {repairQueue.map((item) => (
+                                        <div
+                                            key={item.storageKey}
+                                            className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/5"
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="truncate font-medium">{item.fileName || item.storageKey}</div>
+                                                <div className="mt-0.5 truncate text-[11px] text-stone-500">
+                                                    {[item.bytes ? formatBytes(item.bytes) : "", item.md5 ? `MD5 ${item.md5.slice(0, 10)}…` : "", item.titles.length ? `节点：${item.titles.join("、")}` : ""]
+                                                        .filter(Boolean)
+                                                        .join(" · ")}
+                                                </div>
+                                            </div>
+                                            <Button size="small" loading={repairing} onClick={() => handlePickRepairFile(item.storageKey)}>
+                                                选择文件
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <input ref={repairInputRef} type="file" accept="image/*,video/*,audio/*" multiple className="hidden" onChange={(event) => void handleRepairFiles(event.target.files)} />
+                            </div>
+                        ) : null}
                     </section>
                     {canUseUserStorageProvider ? (
                         <>

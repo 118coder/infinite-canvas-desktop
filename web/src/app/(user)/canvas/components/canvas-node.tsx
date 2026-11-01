@@ -8,7 +8,7 @@ import { ChevronRight, Image as ImageIcon, Maximize2, Music2, Pause, Play, Refre
 import { canvasThemes } from "@/lib/canvas-theme";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
+import { getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
@@ -605,6 +605,9 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
 }
 
 function ImageNodeContent(props: NodeContentRendererProps) {
+    // 有 storageKey 但没有可用地址：说明图片本体还在本地（或缺失），走自愈/缺失提示，
+    // 不能直接落到"空图片节点"——那会让用户以为导入把图片弄丢了。
+    if (!props.node.metadata?.content && props.node.metadata?.storageKey) return <RecoveringImageContent {...props} />;
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
@@ -757,6 +760,48 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="truncate">{node.title || "音频"}</span>
             </div>
             <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+        </div>
+    );
+}
+
+function RecoveringImageContent(props: NodeContentRendererProps) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const storageKey = props.node.metadata?.storageKey || "";
+    const [src, setSrc] = useState("");
+    const [failed, setFailed] = useState(!storageKey);
+
+    useEffect(() => {
+        let cancelled = false;
+        setSrc("");
+        setFailed(false);
+        if (!storageKey) {
+            setFailed(true);
+            return () => {
+                cancelled = true;
+            };
+        }
+        resolveImageUrl(storageKey, "")
+            .then((url) => {
+                if (cancelled) return;
+                if (url) setSrc(url);
+                else setFailed(true);
+            })
+            .catch(() => {
+                if (!cancelled) setFailed(true);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [storageKey]);
+
+    if (src) return <ImageContent {...props} node={{ ...props.node, metadata: { ...props.node.metadata, content: src } }} />;
+
+    return (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
+            <div className="flex size-14 items-center justify-center rounded-2xl" style={{ background: theme.toolbar.activeBg }}>
+                <ImageIcon className={`size-6 opacity-30 ${failed ? "" : "animate-pulse"}`} />
+            </div>
+            <span className="text-[10px] tracking-[0.18em] opacity-50">{failed ? "图片缺失 · 请在设置中补齐" : "正在恢复图片"}</span>
         </div>
     );
 }

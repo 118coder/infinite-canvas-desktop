@@ -18,5 +18,7 @@ desktop/dist/
 web/tsconfig.tsbuildinfo
 debug_pkg/
 test_package.zip
+test_import.zip
 desktop_url.txt
+desktop-port.txt
 desktop_test.log

@@ -71,8 +71,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
     removeItem: (name) => localForageStorage.removeItem(name),
 };
 
-export const useCanvasStore = create<CanvasStore>()(
-    persist(
+export const useCanvasStore = create<CanvasStore>()(    persist(
         (set, get) => ({
             hydrated: false,
             projects: [],
@@ -187,3 +186,25 @@ export const useCanvasStore = create<CanvasStore>()(
         },
     ),
 );
+
+// 整体替换项目列表（数据工程导入用）。
+// 关键点：先取消 pending 的防抖保存，否则旧的 in-memory 状态会在 400ms 后把刚导入的数据盖掉。
+export function replaceCanvasProjects(projects: CanvasProject[]) {
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+    queuedPersistState = null;
+    useCanvasStore.setState({ projects });
+}
+
+// 立即落盘画布项目，不走 400ms 防抖，导入后立刻 reload 也不会丢数据。
+export async function persistCanvasProjectsNow(projects?: CanvasProject[]) {
+    const next = projects || useCanvasStore.getState().projects;
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+    queuedPersistState = null;
+    await localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify({ state: { projects: next }, version: 0 }));
+}

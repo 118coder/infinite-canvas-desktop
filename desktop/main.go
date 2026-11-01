@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,21 +60,12 @@ func main() {
 	engine := router.New()
 	engine.NoRoute(desktopStaticHandler(dist))
 
-	// 默认由系统分配随机空闲端口，避免与其它本机程序（如游戏）冲突；
-	// 需要固定端口时设置环境变量 CANVAS_DESKTOP_PORT（如 36512）
-	listenAddr := "127.0.0.1:0"
-	if port := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_PORT")); port != "" {
-		listenAddr = "127.0.0.1:" + port
-	}
-	listener, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		log.Fatal("unexpected listener address")
-	}
-	url := fmt.Sprintf("http://127.0.0.1:%d", tcpAddr.Port)
+	// 端口决定 WebView2 的页面 origin，而 IndexedDB / localStorage 都按 origin 隔离。
+	// 老实现每次启动都用 127.0.0.1:0 随机端口，等于每开一次就是一个全新的本地存储，
+	// 画布项目、图片 blob、配置全部"消失"——这也是导入后进不去画布的直接原因之一。
+	// 现在固定端口：优先复用上次成功监听的端口，其次 36512 起逐个尝试。
+	listener, port := listenDesktop()
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	go func() {
 		if err := http.Serve(listener, engine); err != nil {
@@ -119,6 +111,78 @@ func openWindow(url string) (opened bool) {
 	w.Run()
 	w.Destroy()
 	return true
+}
+
+const defaultDesktopPort = 36512
+const desktopPortFile = "desktop-port.txt"
+
+// listenDesktop 以固定端口启动本地服务，保证 WebView2 的 origin 稳定，
+// 这样 IndexedDB 里的画布数据和图片才能真正持久化。
+func listenDesktop() (net.Listener, int) {
+	if port := strings.TrimSpace(os.Getenv("CANVAS_DESKTOP_PORT")); port != "" {
+		listener, err := net.Listen("tcp", "127.0.0.1:"+port)
+		if err != nil {
+			log.Fatalf("监听端口 %s 失败：%v", port, err)
+		}
+		return listener, listenerPort(listener)
+	}
+
+	candidates := make([]int, 0, 24)
+	if port := readPortFile(); port > 0 {
+		candidates = append(candidates, port)
+	}
+	candidates = append(candidates, defaultDesktopPort)
+	for port := defaultDesktopPort + 1; port <= defaultDesktopPort+16; port++ {
+		candidates = append(candidates, port)
+	}
+
+	seen := make(map[int]bool, len(candidates))
+	for _, port := range candidates {
+		if seen[port] {
+			continue
+		}
+		seen[port] = true
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		actual := listenerPort(listener)
+		writePortFile(actual)
+		return listener, actual
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatal(err)
+	}
+	actual := listenerPort(listener)
+	writePortFile(actual)
+	log.Printf("固定端口均被占用，改用临时端口 %d：本地存储会与之前的端口分离", actual)
+	return listener, actual
+}
+
+func listenerPort(listener net.Listener) int {
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		log.Fatal("unexpected listener address")
+	}
+	return addr.Port
+}
+
+func readPortFile() int {
+	data, err := os.ReadFile(desktopPortFile)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func writePortFile(port int) {
+	_ = os.WriteFile(desktopPortFile, []byte(strconv.Itoa(port)), 0o644)
 }
 
 // waitForServer 轮询等待本地服务就绪，最多 10 秒
