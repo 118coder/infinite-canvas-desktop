@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video, Wrench } from "lucide-react";
@@ -25,6 +25,8 @@ type CanvasPromptChipInputProps = {
     style?: CSSProperties;
     placeholder?: string;
     placeholderClassName?: string;
+    /** 外部（点击参考缩略图等）在光标处插入一个 @ 引用，参数是 reference.label */
+    insertRef?: MutableRefObject<((label: string) => void) | null>;
 };
 
 type MentionState = {
@@ -36,7 +38,7 @@ type PromptToken =
     | { type: "text"; value: string }
     | { type: "reference"; label: string };
 
-export function CanvasPromptChipInput({ value, references, onChange, onReferenceIdsChange, onSubmit, onPasteImage, pendingReferences, skills, onSkillRemove, readOnly, className, style, placeholder, placeholderClassName }: CanvasPromptChipInputProps) {
+export function CanvasPromptChipInput({ value, references, onChange, onReferenceIdsChange, onSubmit, onPasteImage, pendingReferences, skills, onSkillRemove, readOnly, className, style, placeholder, placeholderClassName, insertRef }: CanvasPromptChipInputProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const caretRangeRef = useRef<Range | null>(null);
@@ -47,6 +49,32 @@ export function CanvasPromptChipInput({ value, references, onChange, onReference
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const activeReferences = useMemo(() => references.filter((reference) => reference.active), [references]);
+    // 供外部（点击参考缩略图）在光标处插入 @ 引用芯片，和手动输入 @ 走同一条插入链路
+    useEffect(() => {
+        if (!insertRef) return;
+        insertRef.current = (label: string) => {
+            const editor = editorRef.current;
+            const reference = referenceByLabel.get(label);
+            if (!editor) return;
+            if (!reference) {
+                const text = `@${label}`;
+                const trimmed = value.replace(/\s+$/, "");
+                onChange(trimmed ? `${trimmed} ${text}` : text);
+                return;
+            }
+            const caret = caretRangeRef.current && editor.contains(caretRangeRef.current.startContainer) ? caretRangeRef.current : null;
+            appendReferenceChip(editor, reference, theme, setImagePreview, true, caret);
+            editor.querySelectorAll<HTMLElement>("[data-pending-reference='true']").forEach((chip) => delete chip.dataset.pendingReference);
+            const nextValue = serializePromptEditor(editor);
+            lastEmittedRef.current = nextValue;
+            onChange(nextValue);
+            onReferenceIdsChange?.(referenceIdsFromEditor(editor));
+            editor.focus();
+        };
+        return () => {
+            insertRef.current = null;
+        };
+    }, [insertRef, onChange, onReferenceIdsChange, theme, value]);
     const referenceByLabel = useMemo(() => new Map(activeReferences.map((reference) => [reference.label, reference])), [activeReferences]);
     const activeLabels = useMemo(() => Array.from(new Set(activeReferences.map((reference) => reference.label))).sort((left, right) => right.length - left.length), [activeReferences]);
     const tokens = useMemo(() => parsePromptTokens(value, activeLabels), [activeLabels, value]);

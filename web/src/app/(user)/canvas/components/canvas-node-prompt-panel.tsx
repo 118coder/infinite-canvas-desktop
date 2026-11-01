@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 
@@ -63,6 +63,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const sourcePrompt = isPanorama ? node.metadata?.panoramaSourcePrompt || "" : node.metadata?.prompt || "";
     const [prompt, setPrompt] = useState(sourcePrompt);
     const [expanded, setExpanded] = useState(false);
+    const insertTokenRef = useRef<((label: string) => void) | null>(null);
     const workflowRef = node.metadata?.workflowRef;
     const billingModel = workflowRef
         ? `workflow:${workflowRef.scope}:${workflowRef.channelId}:${workflowRef.kind}:${workflowRef.workflowId}`
@@ -80,6 +81,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const canSubmit = node.metadata?.status === "stopped" || Boolean(prompt.trim()) || (mode !== "text" && Boolean(node.metadata?.workflowRef)) || (mode === "video" && isAutoDLConfig(config) && getAutoDLCapabilities(autodlWorkflow)?.promptRequired === false) || (isPanorama && (hasImageContent || mentionReferences.length > 0));
 
+    // 点参考缩略图 = 往提示词里插入一个 @ 引用，和手动输入 @ 的效果一致
+    const insertReference = (reference: CanvasResourceReference) => {
+        if (insertTokenRef.current) insertTokenRef.current(reference.label);
+        else updatePrompt(`${prompt.trimEnd()} @${reference.label}`.trim());
+    };
+
     const submit = () => {
         const text = prompt.trim();
         if (!canSubmit || generating || isStopping) return;
@@ -95,11 +102,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             onPointerDown={(event) => event.stopPropagation()}
             onWheel={(event) => event.stopPropagation()}
         >
-            <CanvasNodeReferenceBar nodeId={node.id} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
+            <CanvasNodeReferenceBar nodeId={node.id} connectedNodes={connectedNodes} references={mentionReferences} onInsert={insertReference} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
             <CanvasPromptChipInput
                 value={prompt}
                 references={mentionReferences}
                 onChange={updatePrompt}
+                insertRef={insertTokenRef}
                 onSubmit={submit}
                 className="thin-scrollbar h-32 w-full resize-none rounded-xl px-3 py-2 text-sm leading-5 outline-none"
                 style={{ background: "transparent", color: theme.node.text }}
@@ -166,11 +174,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             </div>
             <Modal title="编辑提示词" open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
-                    <CanvasNodeReferenceBar nodeId={node.id} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
+                    <CanvasNodeReferenceBar nodeId={node.id} connectedNodes={connectedNodes} references={mentionReferences} onInsert={insertReference} onDisconnect={onDisconnectReference} onStartSelection={(nodeId) => { setExpanded(false); onStartReferenceSelection?.(nodeId); }} />
                     <CanvasPromptChipInput
                         value={prompt}
                         references={mentionReferences}
                         onChange={updatePrompt}
+                        insertRef={insertTokenRef}
                         className="thin-scrollbar h-[52dvh] min-h-80 w-full cursor-text overflow-y-auto rounded-2xl border p-4 text-[15px] leading-6 outline-none"
                         style={{ background: "transparent", borderColor: theme.toolbar.border, color: theme.node.text }}
                         placeholder={isPanorama ? "描述想生成的全景，或上传/连接图片作为参考" : promptPlaceholder(mode, hasImageContent, hasTextContent)}

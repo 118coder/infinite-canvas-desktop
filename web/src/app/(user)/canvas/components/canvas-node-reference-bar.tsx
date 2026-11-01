@@ -11,15 +11,30 @@ import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { buildAllCanvasResourceReferences, type CanvasResourceReference } from "../utils/canvas-resource-references";
 import type { CanvasNodeData } from "../types";
 
-export function CanvasNodeReferenceBar({ nodeId, connectedNodes, onDisconnect, onStartSelection }: { nodeId: string; connectedNodes: CanvasNodeData[]; onDisconnect?: (fromNodeId: string, toNodeId: string) => void; onStartSelection?: (nodeId: string) => void }) {
+export function CanvasNodeReferenceBar({
+    nodeId,
+    connectedNodes,
+    references: providedReferences,
+    onDisconnect,
+    onInsert,
+    onStartSelection,
+}: {
+    nodeId: string;
+    connectedNodes: CanvasNodeData[];
+    /** 优先使用面板传入的引用列表，保证 label 与提示词输入框一致 */
+    references?: CanvasResourceReference[];
+    onDisconnect?: (fromNodeId: string, toNodeId: string) => void;
+    onInsert?: (reference: CanvasResourceReference) => void;
+    onStartSelection?: (nodeId: string) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const references = buildAllCanvasResourceReferences(connectedNodes);
+    const references = providedReferences?.length ? providedReferences : buildAllCanvasResourceReferences(connectedNodes);
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
     return (
         <div className="mb-2">
             <div className="mb-1.5 text-[11px] font-medium" style={{ color: theme.node.muted }}>参考内容</div>
             <div className="thin-scrollbar flex min-h-12 gap-2 overflow-x-auto pb-1">
-                {references.map((reference) => <ReferenceItem key={reference.id} reference={reference} onRemove={() => onDisconnect?.(reference.nodeId, nodeId)} />)}
+                {references.map((reference) => <ReferenceItem key={reference.id} reference={reference} onInsert={() => onInsert?.(reference)} onRemove={() => onDisconnect?.(reference.nodeId, nodeId)} />)}
                 <button type="button" className="grid size-12 shrink-0 place-items-center rounded-xl border bg-transparent transition hover:opacity-70" style={{ borderColor: theme.toolbar.border, color: theme.node.muted }} title="从画布选择参考节点" onClick={() => onStartSelection?.(nodeId)}>
                     <Plus className="size-4" />
                 </button>
@@ -28,7 +43,7 @@ export function CanvasNodeReferenceBar({ nodeId, connectedNodes, onDisconnect, o
     );
 }
 
-function ReferenceItem({ reference, onRemove }: { reference: CanvasResourceReference; onRemove: () => void }) {
+function ReferenceItem({ reference, onInsert, onRemove }: { reference: CanvasResourceReference; onInsert: () => void; onRemove: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const projectId = useCanvasUiStore((state) => state.openProjectId) || "";
     const Icon = reference.kind === "image" ? ImageIcon : reference.kind === "video" ? Video : reference.kind === "audio" ? Music2 : FileText;
@@ -36,12 +51,19 @@ function ReferenceItem({ reference, onRemove }: { reference: CanvasResourceRefer
     const previewUrl = reference.kind === "image" ? previewUrlFor(`canvas-node:${projectId}:${reference.nodeId}`, reference.previewSource) || reference.previewUrl : reference.previewUrl;
     return (
         <Popover placement="topLeft" mouseEnterDelay={0.15} content={<ReferencePreview reference={reference} previewUrl={previewUrl} />} arrow={!isMedia} destroyOnHidden={reference.kind === "video"} styles={isMedia ? { container: { padding: 0, background: "transparent", boxShadow: "none" } } : undefined}>
-            <div className="group relative grid size-12 shrink-0 place-items-center rounded-xl border" style={{ background: theme.toolbar.activeBg, borderColor: theme.toolbar.border }}>
+            <button
+                type="button"
+                title={`插入到提示词（@${reference.label}）`}
+                aria-label={`插入 ${reference.title} 到提示词`}
+                onClick={onInsert}
+                className="group relative grid size-12 shrink-0 cursor-pointer place-items-center rounded-xl border transition hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                style={{ background: theme.toolbar.activeBg, borderColor: theme.toolbar.border }}
+            >
                 <span className="grid size-full place-items-center overflow-hidden rounded-[inherit]">
                     {reference.kind === "image" && previewUrl ? <img src={previewUrl} alt="" className="size-full object-cover" /> : reference.kind === "video" && previewUrl ? <video src={previewUrl} className="size-full object-cover" muted /> : <Icon className="size-4 opacity-65" />}
                 </span>
-                <button type="button" className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} aria-label="断开参考连接" title="断开参考连接" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X className="size-3" /></button>
-            </div>
+                <span className="absolute right-0 top-0 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition-opacity group-hover:opacity-100 focus-visible:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }} aria-label="断开参考连接" title="断开参考连接" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onRemove(); }}><X className="size-3" /></span>
+            </button>
         </Popover>
     );
 }
