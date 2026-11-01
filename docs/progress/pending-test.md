@@ -7,11 +7,14 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 ## 桌面版 exe（infinite-canvas-desktop.exe）
 
-- 新增一键构建脚本：双击 `build-desktop.bat`（或 `powershell -File build-desktop.ps1`），产出仓库根目录的 `infinite-canvas-desktop.exe`
-- 产物形态：单个 exe 内嵌全部前端静态页面（Next 静态导出）+ Go 后端（API 同端口），双击启动后在 127.0.0.1 随机端口起服务并自动打开浏览器
+- 已通过 GitHub Actions 自动构建并本地冒烟验证：首页/画布页/JS 资源 200，Go API（health/settings/prompts）正常
+- exe 位置：仓库根目录 `infinite-canvas-desktop.exe`（约 69MB）；双击或「启动桌面版.bat」启动，自动打开浏览器
+- 端口机制：默认每次启动由系统分配随机空闲端口（不会与游戏等固定端口程序冲突）；需要固定端口时设置环境变量 `CANVAS_DESKTOP_PORT`（如 36512）
+- 云端构建：仓库 https://github.com/118coder/infinite-canvas-desktop ，push 到 main 自动构建；滚动发行包 `desktop-latest` 可随时从浏览器重新下载 exe
+- 本地一键构建脚本：`构建桌面版.bat`（需要本机 Bun + Go 1.25+，脚本带环境自检与中文指引；构建时临时把 Next 的 `/api` 代理目录改名，构建后自动还原）
 - 数据全部落在本机：SQLite 数据库存放在 exe 同目录的 `data/`，画布/素材在浏览器本地存储中，关闭 exe 即退出
-- 构建要求：本机安装 Bun 和 Go 1.25+；脚本会临时把 Next 的 `/api` 代理目录改名为私有目录（构建后自动还原）
 - 路由调整：打开画布统一为 `/canvas?project=<id>`（原 `/canvas/<id>` 移除），列表与编辑器共用 /canvas 路由，普通部署与桌面版行为一致
+- 注意：exe 未签名，Windows 首次运行可能提示 SmartScreen，选择"仍要运行"即可
 - 注意：exe 未签名，Windows 首次运行可能提示 SmartScreen，选择"仍要运行"即可
 
 ## 数据工程导出/导入
