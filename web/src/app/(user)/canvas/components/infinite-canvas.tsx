@@ -36,6 +36,8 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         startedOnBackground: false,
     });
     const scaleRef = useRef(viewport.k);
+    const worldRef = useRef<HTMLDivElement>(null);
+    const gridRef = useRef<HTMLDivElement>(null);
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
@@ -177,7 +179,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             if (frameRef.current) return;
             frameRef.current = requestAnimationFrame(() => {
                 frameRef.current = null;
-                if (nextViewportRef.current) onViewportChange(nextViewportRef.current);
+                // 拖动画布时直接写 transform，只做一次合成，不触发 React 重渲染；
+                // 抬手时再把最终 viewport 提交给上层，十几张 4K 图也不会掉帧。
+                if (nextViewportRef.current) applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current);
             });
         };
 
@@ -190,6 +194,11 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             panState.current.isPanning = false;
             setIsPanning(false);
             document.body.style.cursor = "";
+            if (nextViewportRef.current) {
+                applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current);
+                onViewportChange(nextViewportRef.current);
+                nextViewportRef.current = null;
+            }
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -237,7 +246,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
-            <CanvasGrid viewport={viewport} mode={backgroundMode} />
+            <CanvasGrid viewport={viewport} mode={backgroundMode} gridRef={gridRef} />
             {typeof alignmentGuides.vertical === "number" ? (
                 <div
                     className="pointer-events-none absolute inset-y-0 z-[90] w-px opacity-[.48]"
@@ -257,8 +266,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 />
             ) : null}
             <div
+                ref={worldRef}
                 className="absolute origin-top-left"
-                style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.k})`, "--canvas-inverse-scale": 1 / viewport.k } as React.CSSProperties}
+                style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.k})`, willChange: "transform", "--canvas-inverse-scale": 1 / viewport.k } as React.CSSProperties}
             >
                 {children}
             </div>
@@ -267,7 +277,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     );
 }
 
-function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: CanvasBackgroundMode }) {
+function CanvasGrid({ viewport, mode, gridRef }: { viewport: ViewportTransform; mode: CanvasBackgroundMode; gridRef?: React.RefObject<HTMLDivElement | null> }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (mode === "blank") return null;
 
@@ -278,14 +288,31 @@ function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: Can
     const backgroundImage =
         mode === "dots" ? `radial-gradient(circle, ${theme.canvas.dot} ${dotSize}px, transparent ${dotSize + 0.2}px)` : `linear-gradient(${theme.canvas.line} 1px, transparent 1px), linear-gradient(90deg, ${theme.canvas.line} 1px, transparent 1px)`;
 
+    // 用 transform 位移替代 background-position：后者每帧都要重绘整块背景，
+    // 前者只是图层合成，平移时不会和节点抢渲染线程。
     return (
-        <div
-            className="pointer-events-none absolute inset-0 opacity-40"
-            style={{
-                backgroundImage,
-                backgroundSize: `${gridSize}px ${gridSize}px`,
-                backgroundPosition: `${x}px ${y}px`,
-            }}
-        />
+        <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-40">
+            <div
+                ref={gridRef}
+                style={{
+                    position: "absolute",
+                    inset: "-340px",
+                    backgroundImage,
+                    backgroundSize: `${gridSize}px ${gridSize}px`,
+                    transform: `translate3d(${x}px, ${y}px, 0)`,
+                    willChange: "transform",
+                }}
+            />
+        </div>
     );
+}
+
+// 平移期间直接改 DOM 样式，避免每帧 setState 触发整棵画布树重渲染
+function applyViewportTransform(next: ViewportTransform, world: HTMLElement | null, grid: HTMLElement | null) {
+    if (world) world.style.transform = `translate(${next.x}px, ${next.y}px) scale(${next.k})`;
+    if (grid) {
+        const size = 48 * next.k;
+        grid.style.backgroundSize = `${size}px ${size}px`;
+        grid.style.transform = `translate3d(${next.x % size}px, ${next.y % size}px, 0)`;
+    }
 }

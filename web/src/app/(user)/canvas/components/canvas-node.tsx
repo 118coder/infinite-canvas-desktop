@@ -455,7 +455,36 @@ export const CanvasNode = React.memo(function CanvasNode({
             {!referenceSelectionState && showPanel && !isGroup && renderPanel ? <div className={"absolute left-1/2 top-full z-[70] max-w-[calc(100vw-24px)] -translate-x-1/2 pt-4 " + (isCanvasImageNodeType(data.type) || data.type === CanvasNodeType.Video || data.type === CanvasNodeType.Audio ? "w-[682px]" : "w-[500px]")} style={{ transform: "scale(var(--canvas-inverse-scale))", transformOrigin: "top center" }}>{renderPanel(data)}</div> : null}
         </div>
     );
-});
+}, areCanvasNodePropsEqual);
+
+// 画布平移/缩放时父组件每帧都会重建一批内联回调，默认的浅比较会让所有节点跟着重渲染。
+// 这里只比较真正影响渲染的字段：节点数据、缩放、选中/关联等状态；回调函数始终读取最新 props 中的 ref 数据，
+// 不参与比较（面板展开的节点除外，保证输入框内容实时刷新）。
+function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
+    if (prev.data !== next.data) return false;
+    if (prev.showPanel || next.showPanel) return false;
+    if (prev.scale !== next.scale) return false;
+    if (prev.isSelected !== next.isSelected) return false;
+    if (prev.isRelated !== next.isRelated) return false;
+    if (prev.isFocusRelated !== next.isFocusRelated) return false;
+    if (prev.isConnectionTarget !== next.isConnectionTarget) return false;
+    if (prev.isConnecting !== next.isConnecting) return false;
+    if (prev.referenceSelectionState !== next.referenceSelectionState) return false;
+    if (prev.showImageInfo !== next.showImageInfo) return false;
+    if (prev.batchCount !== next.batchCount) return false;
+    if (prev.groupChildCount !== next.groupChildCount) return false;
+    if (prev.isGroupDropTarget !== next.isGroupDropTarget) return false;
+    if (prev.batchExpanded !== next.batchExpanded) return false;
+    if (prev.batchClosing !== next.batchClosing) return false;
+    if (prev.batchOpening !== next.batchOpening) return false;
+    if (prev.batchRecovering !== next.batchRecovering) return false;
+    if (prev.batchMotion !== next.batchMotion) return false;
+    // 引用列表只有文本节点的编辑区会用到；图片/视频节点不比较它，
+    // 否则拖拽时父组件重算的引用数组会让所有节点一起重渲染。
+    if (next.data.type === CanvasNodeType.Text && prev.mentionReferences !== next.mentionReferences) return false;
+    if (prev.now !== next.now) return false;
+    return true;
+}
 
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Group) return null;
@@ -860,6 +889,7 @@ function ImageContent({
                         src={imageSource}
                         alt={node.title}
                         draggable={false}
+                        decoding="async"
                         onLoad={(event) => {
                             const image = event.currentTarget;
                             if (imageSource === content && image.currentSrc === image.src) onResize?.(node.id, image.naturalWidth, image.naturalHeight, undefined, node);

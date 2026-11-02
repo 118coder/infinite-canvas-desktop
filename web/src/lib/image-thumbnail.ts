@@ -1,4 +1,7 @@
-const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 768;
+// 画布内展示用的缩略图长边上限。
+// 4K 图（3840x2160）解码后约占 33MB 内存，十几张就会让拖拽明显掉帧；
+// 1536 长边约 5.9MB，肉眼在 100% 缩放下几乎无差别，放大超过 1.5 倍才回退原图。
+const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 1536;
 
 type ImageSourceChoice = {
     previewUrl?: string;

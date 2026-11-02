@@ -67,7 +67,8 @@ const previewEpochs = new Map<string, number>();
 const previewListeners = new Set<() => void>();
 const serverUrls = new Map<string, string>();
 const previewQueue: Array<() => void> = [];
-const IMAGE_PREVIEW_VERSION = 1;
+// 预览图长边上限调整（768 → 1536）后升版本，让旧缩略图重新生成为更清晰的一档
+const IMAGE_PREVIEW_VERSION = 2;
 const IMAGE_PREVIEW_CONCURRENCY = 2;
 let previewRevision = 0;
 let previewActive = 0;
