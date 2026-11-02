@@ -525,6 +525,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
     // 轮询任务状态失败：连续 3 次就判定无法恢复，把节点释放成可重试的失败态
     const registerTaskPollFailure = useCallback((nodeId: string, error: unknown) => {
+        const target = nodesRef.current.find((node) => node.id === nodeId);
+        if (!target || !canvasRecoverableTaskId(target)) return;
         const failures = (taskPollFailuresRef.current.get(nodeId) || 0) + 1;
         taskPollFailuresRef.current.set(nodeId, failures);
         if (failures < 3) return;
@@ -802,7 +804,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         if (!projectLoaded) return;
         const pollCanvasTasks = () => {
             nodesRef.current.filter((node) => node.metadata?.status === "stopping" && !node.metadata.errorDetails).forEach((node) => { void handleStopNode(node.id); });
-            const videoTargets = nodesRef.current.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && canvasVideoTaskId(node.metadata));
+            // 只轮询服务端真实任务号：本地直连生成期间节点上只有 client_ 占位号，
+            // 拿它去查服务端必然失败（且本地模式根本没有登录态），会把正在生成的节点误判成失败。
+            const videoTargets = nodesRef.current.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && isServerTaskId(canvasVideoTaskId(node.metadata)));
             videoTargets.forEach((node) => {
                 if (pollingVideoNodeIdsRef.current.has(node.id)) return;
                 const taskId = canvasVideoTaskId(node.metadata);
@@ -826,7 +830,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         pollingVideoNodeIdsRef.current.delete(node.id);
                     });
             });
-            const imageTargets = nodesRef.current.filter((node) => isCanvasImageNodeType(node.type) && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && node.metadata.imageTaskId);
+            const imageTargets = nodesRef.current.filter((node) => isCanvasImageNodeType(node.type) && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && isServerTaskId(node.metadata.imageTaskId));
             imageTargets.forEach((node) => {
                 if (pollingImageNodeIdsRef.current.has(node.id) || !node.metadata?.imageTaskId) return;
                 const workflowToken = node.metadata.workflowRef ? useUserStore.getState().token : "";
@@ -848,7 +852,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         pollingImageNodeIdsRef.current.delete(node.id);
                     });
             });
-            const audioTargets = nodesRef.current.filter((node) => node.type === CanvasNodeType.Audio && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && node.metadata.audioTaskId);
+            const audioTargets = nodesRef.current.filter((node) => node.type === CanvasNodeType.Audio && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && isServerTaskId(node.metadata.audioTaskId));
             audioTargets.forEach((node) => {
                 if (pollingAudioNodeIdsRef.current.has(node.id) || !node.metadata?.audioTaskId) return;
                 const workflowToken = node.metadata.workflowRef ? useUserStore.getState().token : "";
