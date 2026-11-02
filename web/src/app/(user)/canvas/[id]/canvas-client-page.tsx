@@ -489,6 +489,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const pollingVideoNodeIdsRef = useRef(new Map<string, AbortController>());
     const pollingImageNodeIdsRef = useRef(new Map<string, AbortController>());
     const pollingAudioNodeIdsRef = useRef(new Map<string, AbortController>());
+    // 任务状态连续查询失败次数：达到阈值就把节点标成失败，避免永远卡在"生成中"
+    const taskPollFailuresRef = useRef(new Map<string, number>());
     const hasLoadingTimedNodes = nodes.some((node) => node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && (node.type === CanvasNodeType.Video || isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Audio));
 
     const rememberNodeTask = useCallback(<T extends CanvasImageTask | CanvasAudioTask | VideoResponse,>(nodeId: string, id: string | undefined, task: T) => {
@@ -519,6 +521,33 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const isNodeTaskActive = useCallback((nodeId: string, id?: string) => {
         const run = nodeTaskRunsRef.current.get(nodeId);
         return !run || (run.id === id && !run.controller.signal.aborted);
+    }, []);
+
+    // 轮询任务状态失败：连续 3 次就判定无法恢复，把节点释放成可重试的失败态
+    const registerTaskPollFailure = useCallback((nodeId: string, error: unknown) => {
+        const failures = (taskPollFailuresRef.current.get(nodeId) || 0) + 1;
+        taskPollFailuresRef.current.set(nodeId, failures);
+        if (failures < 3) return;
+        taskPollFailuresRef.current.delete(nodeId);
+        const reason = error instanceof Error ? error.message : "";
+        setNodes((prev) =>
+            prev.map((node) =>
+                node.id === nodeId && node.metadata?.status === NODE_STATUS_LOADING
+                    ? {
+                        ...node,
+                        metadata: {
+                            ...node.metadata,
+                            status: NODE_STATUS_ERROR,
+                            errorDetails: `查询任务状态失败${reason ? `（${reason}）` : ""}。如果渠道后台已生成完成，可以到后台下载原图，或直接重新生成。`,
+                        },
+                    }
+                    : node,
+            ),
+        );
+    }, []);
+
+    const resetTaskPollFailure = useCallback((nodeId: string) => {
+        taskPollFailuresRef.current.delete(nodeId);
     }, []);
 
     const handleStopNode = useCallback(async (nodeId: string) => {
@@ -787,11 +816,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     : pollVideoGenerationTaskStatus(generationConfig, canvasVideoTaskFromMetadata(node.metadata), controller.signal))
                     .then((result) => {
                         if (controller.signal.aborted) return;
+                        resetTaskPollFailure(node.id);
                         const task = rememberNodeTask(node.id, node.metadata?.clientTaskId, result);
                         if (!isNodeTaskActive(node.id, node.metadata?.clientTaskId)) return;
                         setNodes((prev) => applyCanvasVideoTaskUpdate(prev, node.id, task, generationConfig, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }, node.metadata?.clientTaskId));
                     })
-                    .catch(() => undefined)
+                    .catch((error) => registerTaskPollFailure(node.id, error))
                     .finally(() => {
                         pollingVideoNodeIdsRef.current.delete(node.id);
                     });
@@ -807,12 +837,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     : pollCanvasImageTaskStatus(node.metadata.imageTaskId, controller.signal))
                     .then((result) => {
                         if (controller.signal.aborted) return;
+                        resetTaskPollFailure(node.id);
                         const task = rememberNodeTask(node.metadata?.clientTaskId ? node.id : node.metadata?.primaryImageId || node.id, node.metadata?.clientTaskId || node.metadata?.imageTaskId, result);
                         if (!node.metadata?.isBatchRoot && !isNodeTaskActive(node.id, node.metadata?.clientTaskId)) return;
                         setNodes((prev) => applyCanvasImageTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now(), { width: node.width, height: node.height }, node.metadata?.clientTaskId));
                         setConnections((prev) => node.metadata?.isBatchRoot || isNodeTaskActive(node.id, node.metadata?.clientTaskId) ? applyCanvasImageTaskConnections(prev, node.id, task, node.metadata?.batchRootId) : prev);
                     })
-                    .catch(() => undefined)
+                    .catch((error) => registerTaskPollFailure(node.id, error))
                     .finally(() => {
                         pollingImageNodeIdsRef.current.delete(node.id);
                     });
@@ -828,11 +859,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     : pollCanvasAudioTaskStatus(node.metadata.audioTaskId, controller.signal))
                     .then((task) => {
                         if (controller.signal.aborted) return;
+                        resetTaskPollFailure(node.id);
                         rememberNodeTask(node.id, node.metadata?.clientTaskId, task);
                         if (!isNodeTaskActive(node.id, node.metadata?.clientTaskId)) return;
                         setNodes((prev) => applyCanvasAudioTaskUpdate(prev, node.id, task, node.metadata?.startedAt || Date.now(), node.metadata?.clientTaskId));
                     })
-                    .catch(() => undefined)
+                    .catch((error) => registerTaskPollFailure(node.id, error))
                     .finally(() => {
                         pollingAudioNodeIdsRef.current.delete(node.id);
                     });
@@ -841,7 +873,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         pollCanvasTasks();
         const timer = window.setInterval(pollCanvasTasks, VIDEO_POLL_INTERVAL_MS);
         return () => window.clearInterval(timer);
-    }, [effectiveConfig, handleStopNode, isAiConfigReady, isNodeTaskActive, projectLoaded, rememberNodeTask]);
+    }, [effectiveConfig, handleStopNode, isAiConfigReady, isNodeTaskActive, projectLoaded, registerTaskPollFailure, rememberNodeTask, resetTaskPollFailure]);
 
     useEffect(() => {
         if (!hasLoadingTimedNodes) return;
@@ -6417,14 +6449,36 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
 }
 
 function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) => (node.metadata?.status === "loading" && !canvasRecoverableTaskId(node) ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } } : node));
+    return nodes.map((node) =>
+        node.metadata?.status === "loading" && !canvasRecoverableTaskId(node)
+            ? {
+                ...node,
+                metadata: {
+                    ...node.metadata,
+                    status: "error" as const,
+                    errorDetails: "应用关闭时这次生成被中断，请重新生成。如果渠道后台已经出图，可以到后台下载原图。",
+                },
+            }
+            : node,
+    );
+}
+
+// 只有服务端真实任务号才能在重开应用后继续查询；
+// client_xxx 是本地的占位 id（请求一走就断了），拿它去轮询永远查不到结果。
+function isServerTaskId(id?: string) {
+    if (!id) return false;
+    return !/^(client_|local_|tmp_)/i.test(id);
 }
 
 function canvasRecoverableTaskId(node: CanvasNodeData) {
-    if (node.type === CanvasNodeType.Video) return canvasVideoTaskId(node.metadata);
-    if (isCanvasImageNodeType(node.type)) return node.metadata?.imageTaskId || "";
-    if (node.type === CanvasNodeType.Audio) return node.metadata?.audioTaskId || "";
-    return "";
+    const candidate = node.type === CanvasNodeType.Video
+        ? canvasVideoTaskId(node.metadata)
+        : isCanvasImageNodeType(node.type)
+            ? node.metadata?.imageTaskId || ""
+            : node.type === CanvasNodeType.Audio
+                ? node.metadata?.audioTaskId || ""
+                : "";
+    return isServerTaskId(candidate) ? candidate : "";
 }
 
 function canvasTaskCompleted(status?: string) {
