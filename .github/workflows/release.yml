@@ -1,0 +1,141 @@
+name: Release
+
+# 打 tag（如 v0.9.0）即发布一个正式发行包：
+#   - 构建单文件 exe（内嵌前端 + 后端）
+#   - 打包 zip：exe + 使用说明 + LICENSE + VERSION
+#   - 生成 GitHub Release，正文取 CHANGELOG.md 里对应版本的条目
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布的 tag（例如 v0.9.0，需与 CHANGELOG 中的版本标题一致）
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build frontend (static export)
+        working-directory: web
+        run: |
+          rm -rf .next out node_modules
+          bun install --frozen-lockfile
+          bun run build:bridge
+          mv src/app/api src/app/_api
+          BUILD_DESKTOP=1 bunx next build
+          mv src/app/_api src/app/api
+
+      - name: Collect static output
+        run: |
+          rm -rf desktop/dist
+          cp -r web/out desktop/dist
+
+      - name: Build Windows executable
+        run: |
+          go mod tidy
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o infinite-canvas-desktop.exe ./desktop
+
+      - name: Package release zip
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+
+          version = os.environ["RELEASE_TAG"]
+          folder = f"无限画布-{version}"
+          root = pathlib.Path("package") / folder
+          root.mkdir(parents=True, exist_ok=True)
+
+          def copy(src: str, dst: str) -> None:
+              data = pathlib.Path(src).read_bytes()
+              (root / dst).write_bytes(data)
+
+          # exe 保持原文件名：userdata / desktop-port.txt 都按 exe 目录定位，重命名不影响，
+          # 但保留原名可以让老用户从 %AppData%\infinite-canvas-desktop.exe 自动迁移数据。
+          copy("infinite-canvas-desktop.exe", "infinite-canvas-desktop.exe")
+          copy("docs/使用说明.md", "使用说明.md")
+          copy("LICENSE", "LICENSE")
+          copy("VERSION", "VERSION")
+
+          (root / "启动说明.txt").write_text(
+              "1. 解压到有写权限的目录（不要放 C:\\Program Files）\n"
+              "2. 双击 infinite-canvas-desktop.exe\n"
+              "3. 首次启动会在同目录生成 userdata 文件夹，画布和图片都存在这里\n"
+              "4. 打开后点右上角齿轮配置模型渠道（Base URL / API Key）即可开始使用\n\n"
+              f"版本：{version}\n详细说明见 使用说明.md\n",
+              encoding="utf-8",
+          )
+
+          archive = pathlib.Path(f"{folder}-win-x64.zip")
+          with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      zf.write(path, path.relative_to(root.parent).as_posix())
+          print(f"packaged {archive} ({archive.stat().st_size} bytes)")
+          PY
+
+      - name: Build release notes
+        run: |
+          python3 - <<'PY' > release-notes.md
+          import os, re
+
+          tag = os.environ["RELEASE_TAG"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          blocks = re.split(r"^## ", text, flags=re.M)[1:]
+          body = None
+          for block in blocks:
+              title, *lines = block.strip().split("\n")
+              if not title.strip().startswith(tag):
+                  continue
+              items = []
+              for line in lines:
+                  match = re.match(r"^\+\s+\[(.+?)\]\s+(.+)$", line.strip())
+                  if match:
+                      items.append(f"- **{match.group(1)}** {match.group(2)}")
+              body = f"## {title.strip()}\n\n" + "\n".join(items)
+              break
+
+          print(f"# 无限画布 {tag}\n")
+          print("Windows 便携版，单文件、免安装，解压即用。\n")
+          print(body or "- 本次发布")
+          print("\n## 下载说明\n")
+          print("- `无限画布-*-win-x64.zip`：推荐，包含 exe 与使用说明，解压后直接运行；")
+          print("- `infinite-canvas-desktop.exe`：只想拿单个可执行文件时使用。\n")
+          print("## 运行要求\n")
+          print("- Windows 10 / 11 x64，需要 WebView2 运行时（Win11 自带）；")
+          print("- 首次启动会在 exe 同级生成 `userdata` 目录，画布与图片全部保存在本地，不写 C 盘。\n")
+          print("## 数据位置\n")
+          print("- 画布/图片/缓存：exe 同级 `userdata/`；")
+          print("- 服务端口：exe 同级 `desktop-port.txt`（端口即本地数据身份，请勿随意删除）。")
+          PY
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: 无限画布 ${{ env.RELEASE_TAG }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            infinite-canvas-desktop.exe
+            无限画布-*-win-x64.zip

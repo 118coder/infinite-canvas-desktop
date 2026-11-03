@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.8.3-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.9.0-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
 </p>
 
@@ -40,11 +40,13 @@
 
 Windows 单文件版本，前端、后端、静态资源全部内嵌在一个 exe 里，双击即用，不需要装 Node、Go 或数据库。
 
-1. 从仓库 Releases 的 `desktop-latest` 下载 `infinite-canvas-desktop.exe`；
+1. 打开仓库 Releases，下载最新的 `无限画布-*-win-x64.zip`（含 exe、使用说明、LICENSE）或单个 `infinite-canvas-desktop.exe`；
 2. 放到一个**有写权限**的目录（不要放 `C:\Program Files`），双击运行；
 3. 首次启动会生成同级的 `userdata/` 目录，画布数据、图片本体、网页缓存都存在这里，不再占用 C 盘。
 
 运行时会在 `127.0.0.1` 上起一个本地服务，默认端口 `36512`，并把端口记在 `desktop-port.txt` 里。**端口就是本地数据的身份**，每次启动会尽量复用同一个端口，请不要随手改动。需要强制指定端口时，设置环境变量 `CANVAS_DESKTOP_PORT`。
+
+详细的上手步骤、数据迁移和常见问题见 [使用说明](docs/使用说明.md)。
 
 ## 首次使用
 
