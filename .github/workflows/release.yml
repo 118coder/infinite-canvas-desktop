@@ -83,7 +83,8 @@ jobs:
               encoding="utf-8",
           )
 
-          archive = pathlib.Path(f"{folder}-win-x64.zip")
+          # 资产名用纯 ASCII：GitHub 会把非 ASCII 字符从资产文件名里剥掉，中文名会变成 " -v0.9.0-win-x64.zip"
+          archive = pathlib.Path(f"infinite-canvas-{version}-win-x64.zip")
           with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
               for path in sorted(root.rglob("*")):
                   if path.is_file():
@@ -138,4 +139,4 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             infinite-canvas-desktop.exe
-            无限画布-*-win-x64.zip
+            infinite-canvas-*-win-x64.zip
