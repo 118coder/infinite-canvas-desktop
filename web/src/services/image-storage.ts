@@ -72,7 +72,8 @@ const serverUrls = new Map<string, string>();
 const previewQueue: Array<() => void> = [];
 // 预览图长边上限调整（768 → 1536）后升版本，让旧缩略图重新生成为更清晰的一档
 const IMAGE_PREVIEW_VERSION = 2;
-const IMAGE_PREVIEW_CONCURRENCY = 2;
+// 主要任务是 @256 小档，单张编码很小；提高到 4 让 500 张图的过渡期尽快结束。
+const IMAGE_PREVIEW_CONCURRENCY = 4;
 let previewRevision = 0;
 let previewActive = 0;
 // 画布手势（平移/缩放/拖拽）期间暂停启动新的预览生成任务，手势结束后再统一排空队列
@@ -255,8 +256,9 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
     });
 }
 
-// 预览生成（4K 解码 + 缩放 + WebP 编码）只在空闲时段推进，
-// 500 张图排队时也不会和拖拽/缩放抢主线程；手势期间整体停摆。
+// 预览生成（4K 解码 + 缩放 + WebP 编码）分批推进，手势期间整体停摆。
+// 不用 requestIdleCallback：用户持续拖拽/缩放时 idle 会长期被饿死，
+// 500 张图的小档就永远生成不完，画布会一直停在占位状态。
 let previewDrainScheduled = false;
 function drainPreviewQueue() {
     if (canvasGestureActive || previewDrainScheduled) return;
@@ -270,8 +272,8 @@ function drainPreviewQueue() {
         }
         if (previewQueue.length) drainPreviewQueue();
     };
-    if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 400 });
-    else setTimeout(start, 0);
+    // 每 12ms 才调度一批，启动开销极小；真正的解码/编码在异步任务里，不会阻塞交互帧。
+    setTimeout(start, 12);
 }
 
 function queueImagePreview<T>(task: () => Promise<T>) {

@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { ChevronRight, Image as ImageIcon, Maximize2, Music2, Pause, Play, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { lodFallbackKeys, lodKeyFor, pickImageSource, pickLodLevel, requiredLodLongEdge } from "@/lib/image-thumbnail";
+import { lodFallbackKeys, lodKeyFor, pickLodLevel, requiredLodLongEdge } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { ensureImagePreview, getImagePreviewVersion, previewUrlFor, resolveImageUrl, skipsImagePreview, subscribeImagePreview } from "@/services/image-storage";
 import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
@@ -977,9 +977,29 @@ function ImageContent({
         void ensureImagePreview(targetKey, content, storageKey, previewSource, false, targetLevel).catch(() => undefined);
     }, [content, isLocalSource, targetKey, targetLevel, previewSource, storageKey]);
 
-    // 从目标档一路回退到 @256；任何档位都未就绪时只画占位色，绝不把 4K 原图塞进画布。
+    // 从目标档一路回退到 @256。换档时先把新位图预解码再替换 <img src>，
+    // 否则 src 一变浏览器会先清空图像再解码，那一帧就是用户看到的闪烁。
     const cachedPreview = fallbackKeys.map((key) => previewUrlFor(key, previewSource)).find((url) => Boolean(url)) || "";
-    const imageSource = pickImageSource({ previewUrl: cachedPreview, originalUrl: isLocalSource ? content : "" });
+    const targetSrc = cachedPreview || (isLocalSource ? content : "");
+    const [displaySrc, setDisplaySrc] = useState(() => targetSrc);
+    useEffect(() => {
+        if (!targetSrc || targetSrc === displaySrc) return;
+        let cancelled = false;
+        const image = new Image();
+        image.decoding = "async";
+        image.src = targetSrc;
+        const apply = () => {
+            if (!cancelled) setDisplaySrc(targetSrc);
+        };
+        if (typeof image.decode === "function") void image.decode().then(apply, apply);
+        else {
+            image.onload = apply;
+            image.onerror = apply;
+        }
+        return () => { cancelled = true; };
+    }, [targetSrc, displaySrc]);
+    // 目标档位暂缺时继续显示上一张图，不切回占位色。
+    const imageSource = displaySrc || targetSrc;
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>

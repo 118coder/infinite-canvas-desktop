@@ -1,13 +1,13 @@
 "use client";
 
-import { memo, useCallback, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { lodKeyFor, SMALL_LOD_LEVEL } from "@/lib/image-thumbnail";
-import { getImagePreviewVersion, previewUrlFor, skipsImagePreview, subscribeImagePreview } from "@/services/image-storage";
+import { allLodKeys } from "@/lib/image-thumbnail";
+import { getImagePreviewVersion, previewUrlFor, subscribeImagePreview } from "@/services/image-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
-import type { CanvasNodeData } from "../types";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { isCanvasImageNodeType } from "../utils/canvas-panorama";
 
 type CanvasNodeTileProps = {
@@ -18,65 +18,108 @@ type CanvasNodeTileProps = {
     onViewImage?: (node: CanvasNodeData) => void;
 };
 
+const TYPE_LABEL: Record<string, string> = {
+    [CanvasNodeType.Text]: "文本",
+    [CanvasNodeType.Config]: "生成配置",
+    [CanvasNodeType.Director]: "导演台",
+    [CanvasNodeType.Video]: "视频",
+    [CanvasNodeType.Audio]: "音频",
+    [CanvasNodeType.Image]: "图片",
+    [CanvasNodeType.Panorama]: "全景图",
+    [CanvasNodeType.Group]: "组",
+};
+
 /**
  * DOM 级 LOD：缩小画布或视口内节点过多时，用这个极简瓦片替代完整的 CanvasNode。
- * 500 张 4K 图同时进入视口时，只挂载 500 个轻量 div + @256 小档位图，
- * 不挂载标题、边框装饰、四角拉伸柄、连线端点与底部面板。
+ * 关键约定：瓦片不能把节点画成空心黑框。图片节点优先用任意已生成的 LOD 档位，
+ * 档位尚未就绪时暂时用原内容（配合 lazy/async 解码），后台小档生成后会自动替换；
+ * 组节点保持透明边框让子节点可见，文本/配置等节点直接显示文字内容。
  */
 export const CanvasNodeTile = memo(function CanvasNodeTile({ data, isSelected, onMouseDown, onContextMenu, onViewImage }: CanvasNodeTileProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const projectId = useCanvasUiStore((state) => state.openProjectId) || "";
     const baseKey = `canvas-node:${projectId}:${data.id}`;
-    const smallKey = lodKeyFor(baseKey, SMALL_LOD_LEVEL);
     const content = data.metadata?.content || "";
     const storageKey = data.metadata?.storageKey;
     const previewSource = `${data.metadata?.primaryImageId || ""}:${data.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
 
-    // 只订阅 @256 与主档：后台预生成小档完成后该瓦片单独刷新，不牵动其它节点。
+    // 订阅全部档位：任一档位在后台生成完成，该瓦片单独刷新，不牵动其它节点。
+    const lodKeys = useMemo(() => allLodKeys(baseKey), [baseKey]);
+    const lodToken = lodKeys.join("|");
     const subscribePreview = useCallback(
         (onStoreChange: () => void) => {
-            const offSmall = subscribeImagePreview(smallKey, onStoreChange);
-            const offMain = subscribeImagePreview(baseKey, onStoreChange);
-            return () => {
-                offSmall();
-                offMain();
-            };
+            const offs = lodKeys.map((key) => subscribeImagePreview(key, onStoreChange));
+            return () => offs.forEach((off) => off());
         },
-        [baseKey, smallKey],
+        [lodToken],
     );
     const getPreviewSnapshot = useCallback(
-        () => getImagePreviewVersion(smallKey) + getImagePreviewVersion(baseKey),
-        [baseKey, smallKey],
+        () => lodKeys.reduce((sum, key) => sum + getImagePreviewVersion(key), 0),
+        [lodToken],
     );
     useSyncExternalStore(subscribePreview, getPreviewSnapshot, getPreviewSnapshot);
 
     const isImage = isCanvasImageNodeType(data.type);
-    // blob/data/comfy 源没有预览档位，这类节点直接用原内容；远程源绝不回退 4K 原图。
-    const isLocalSource = skipsImagePreview(content, storageKey);
-    const imageSource = isImage
-        ? previewUrlFor(smallKey, previewSource) || previewUrlFor(baseKey, previewSource) || (isLocalSource ? content : "")
-        : "";
+    const isGroup = data.type === CanvasNodeType.Group;
+    const isText = data.type === CanvasNodeType.Text;
+    // 从低档到高档找任意已就绪的预览；都没有时回退原内容，避免出现无内容的色块。
+    const cachedPreview = lodKeys.map((key) => previewUrlFor(key, previewSource)).find((url) => Boolean(url)) || "";
+    const targetSrc = isImage ? cachedPreview || content : "";
+    // 小档生成完成后先预解码再换 src，避免 src 变化那一帧图像被清空造成闪烁。
+    const [displaySrc, setDisplaySrc] = useState(() => targetSrc);
+    useEffect(() => {
+        if (!targetSrc || targetSrc === displaySrc) return;
+        let cancelled = false;
+        const image = new Image();
+        image.decoding = "async";
+        image.src = targetSrc;
+        const apply = () => {
+            if (!cancelled) setDisplaySrc(targetSrc);
+        };
+        if (typeof image.decode === "function") void image.decode().then(apply, apply);
+        else {
+            image.onload = apply;
+            image.onerror = apply;
+        }
+        return () => { cancelled = true; };
+    }, [targetSrc, displaySrc]);
+    const imageSource = displaySrc || targetSrc;
+
+    const frameStyle = {
+        transform: `translate(${data.position.x}px, ${data.position.y}px)`,
+        width: data.width,
+        height: data.height,
+        boxShadow: isSelected ? `inset 0 0 0 2px ${theme.node.activeStroke}` : undefined,
+        cursor: "grab",
+    } as const;
+    const interaction = {
+        onMouseDown: (event: ReactMouseEvent) => onMouseDown(event, data.id),
+        onContextMenu: (event: ReactMouseEvent) => onContextMenu(event, data.id),
+        onDoubleClick: () => {
+            if (isImage && content) onViewImage?.(data);
+        },
+    };
+
+    // 组节点必须保持透明，否则会盖住框内的子节点。
+    if (isGroup) {
+        return (
+            <div
+                data-node-id={data.id}
+                className="node-element absolute select-none"
+                style={{ ...frameStyle, contain: "layout style", background: "transparent", border: `1px dashed ${theme.node.stroke}`, borderRadius: 12 }}
+                {...interaction}
+            >
+                <span className="absolute -top-5 left-1 whitespace-nowrap text-xs" style={{ color: theme.node.muted }}>{data.title || "组"}</span>
+            </div>
+        );
+    }
 
     return (
         <div
             data-node-id={data.id}
             className="node-element absolute select-none"
-            style={{
-                transform: `translate(${data.position.x}px, ${data.position.y}px)`,
-                width: data.width,
-                height: data.height,
-                contain: "layout style paint",
-                background: theme.node.fill,
-                borderRadius: 10,
-                overflow: "hidden",
-                boxShadow: isSelected ? `inset 0 0 0 2px ${theme.node.activeStroke}` : undefined,
-                cursor: "grab",
-            }}
-            onMouseDown={(event) => onMouseDown(event, data.id)}
-            onContextMenu={(event) => onContextMenu(event, data.id)}
-            onDoubleClick={() => {
-                if (isImage && content) onViewImage?.(data);
-            }}
+            style={{ ...frameStyle, contain: "layout style paint", background: theme.node.fill, borderRadius: 10, overflow: "hidden" }}
+            {...interaction}
         >
             {imageSource ? (
                 <img
@@ -87,9 +130,13 @@ export const CanvasNodeTile = memo(function CanvasNodeTile({ data, isSelected, o
                     decoding="async"
                     className="pointer-events-none block h-full w-full select-none object-cover"
                 />
+            ) : isText ? (
+                <div className="h-full w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-xs leading-5" style={{ color: theme.node.text }}>
+                    {content || data.title || "文本"}
+                </div>
             ) : (
-                <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs opacity-70" style={{ color: theme.node.text }}>
-                    <span className="line-clamp-2">{data.title || (isImage ? "图片" : "节点")}</span>
+                <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs" style={{ color: theme.node.text }}>
+                    <span className="line-clamp-2 opacity-80">{data.title || TYPE_LABEL[data.type] || "节点"}</span>
                 </div>
             )}
         </div>
