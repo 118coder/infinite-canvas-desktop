@@ -28,6 +28,7 @@
 
 - [待测试](progress/pending-test.md)
 - [TODO](progress/todo.md)
+- [交接：画布与素材优化批次 + 检查更新](progress/handoff-canvas-optimization.md)
 
 ## 说明
 
