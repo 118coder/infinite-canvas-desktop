@@ -9,6 +9,7 @@ import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { useCanvasUiStore } from "@/app/(user)/canvas/stores/use-canvas-ui-store";
 import { useConfigStore } from "@/stores/use-config-store";
+import { useUpdateStore } from "@/stores/use-update-store";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
@@ -16,6 +17,7 @@ export function AppTopNav() {
     const pathname = usePathname();
     const openProjectId = useCanvasUiStore((state) => state.openProjectId);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const hasNewVersion = useUpdateStore((state) => state.hasNewVersion);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const hideHeader = Boolean(openProjectId);
     const slug = pathname.split("/").filter(Boolean)[0];
@@ -79,7 +81,10 @@ export function AppTopNav() {
                                 aria-label="打开设置"
                                 title="设置（渠道 / API Key / 生成参数）"
                             >
-                                <Settings2 className="size-5" />
+                                <span className="relative inline-flex">
+                                    <Settings2 className="size-5" />
+                                    {hasNewVersion ? <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-emerald-500" /> : null}
+                                </span>
                             </button>
                             <Link
                                 href="/canvas"

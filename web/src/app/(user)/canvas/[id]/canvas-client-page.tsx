@@ -13,7 +13,7 @@ import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VIDEO_POLL_IN
 import { comfyOutputStorageKey, getWorkflowTask, submitWorkflowTask, workflowMediaSource, type WorkflowGenerationTask } from "@/services/api/workflow-generation";
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { channelProtocolForConfig, defaultConfig, resolveModelForCapability, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, smallImagePreviewKey, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
+import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, smallImagePreviewKey, SMALL_IMAGE_PREVIEW_MAX_EDGE, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -73,6 +73,7 @@ import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-si
 import { FullscreenPreview } from "../components/canvas-fullscreen-preview";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
+import { useUpdateStore } from "@/stores/use-update-store";
 import { hydrateCanvasImagesSafe, imageMetadata } from "../utils/canvas-media-restore";
 import { consumePendingCanvasInsert, rememberCanvasId } from "@/lib/canvas-handoff";
 import { recordRecentAssetId } from "@/hooks/use-asset-filters";
@@ -687,6 +688,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         return ensureImagePreview(`canvas-node:${projectId}:${node.id}`, content, storageKey, source, true).catch(() => undefined);
                     }),
                 );
+                // 主档就绪后稍作等待，再后台排队生成 256 小档：
+                // 左栏 40px 缩略图随开随用，滚动列表时不再边滚边生成替换
+                window.setTimeout(() => {
+                    resetNodes.forEach((node) => {
+                        if (!isCanvasImageNodeType(node.type) || !node.metadata?.content) return;
+                        const content = node.metadata.content;
+                        const storageKey = node.metadata.storageKey;
+                        const source = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
+                        void ensureImagePreview(smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`), content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
+                    });
+                }, 3000);
                 restoredNodes = await hydrateCanvasImagesSafe(resetNodes);
             } catch (error) {
                 console.error("恢复画布媒体失败，已回退为原始节点", error);
@@ -1103,7 +1115,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     );
 
     const visibleNodes = useMemo(() => {
-        const padding = 280;
+        // 边距按当前缩放换算成恒定的 280px 屏幕边距：固定世界边距在放大时过多、缩小时过少
+        const padding = 280 / Math.max(viewport.k, 0.05);
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
         const height = rect?.height || size.height;
@@ -3181,6 +3194,24 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         uploadTargetRef.current = { nodeId, restoreDialogNodeId: dialogNodeId || undefined };
     }, [createNode, dialogNodeId, handleUploadRequest]);
 
+    // 底部工具栏回调统一走稳定引用：配合 CanvasToolbar 的 memo，页面其它状态变化不再拖动 dock 重渲染
+    const handleToolbarUndo = useCallback(() => undoCanvas(), [undoCanvas]);
+    const handleToolbarRedo = useCallback(() => redoCanvas(), [redoCanvas]);
+    const handleToolbarAddVideo = useCallback(() => createNode(CanvasNodeType.Video), [createNode]);
+    const handleToolbarAddAudio = useCallback(() => createNode(CanvasNodeType.Audio), [createNode]);
+    const handleToolbarAddText = useCallback(() => createNode(CanvasNodeType.Text), [createNode]);
+    const handleToolbarAddPanorama = useCallback(() => createNode(CanvasNodeType.Panorama), [createNode]);
+    const handleToolbarAddDirector = useCallback(() => createNode(CanvasNodeType.Director), [createNode]);
+    const handleToolbarAddConfig = useCallback(() => createNode(CanvasNodeType.Config), [createNode]);
+    const handleToolbarUpload = useCallback(() => handleUploadRequest(), [handleUploadRequest]);
+    const handleToolbarDelete = useCallback(() => deleteNodes(new Set(selectedNodeIds)), [deleteNodes, selectedNodeIds]);
+    const handleToolbarClear = useCallback(() => setClearConfirmOpen(true), []);
+    const handleToolbarOpenAssets = useCallback(() => setAssetPickerOpen(true), []);
+    const handleToolbarToggleMinimap = useCallback(() => setMinimapOpen(!minimapOpen), [minimapOpen]);
+    const handleToolbarBatchSave = useCallback(() => void saveSelectedAssets(), [saveSelectedAssets]);
+    const handleToolbarBatchDownload = useCallback(() => downloadSelectedNodes(), [downloadSelectedNodes]);
+    const handleToolbarBatchUpload = useCallback(() => void uploadSelectedNodesToCloud(), [uploadSelectedNodesToCloud]);
+
     const handleImageInputChange = useCallback(
         async (event: ReactChangeEvent<HTMLInputElement>) => {
             const files = Array.from(event.target.files || []);
@@ -5061,29 +5092,27 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     gridSpacing={gridSpacing}
                     sidebarWidth={sidePanel.open ? sidePanel.width : 0}
                     onAddImage={handleToolbarAddImage}
-                    onAddVideo={() => createNode(CanvasNodeType.Video)}
-                    onAddAudio={() => createNode(CanvasNodeType.Audio)}
-                    onAddText={() => createNode(CanvasNodeType.Text)}
-                    onAddPanorama={() => createNode(CanvasNodeType.Panorama)}
-                    onAddDirector={() => createNode(CanvasNodeType.Director)}
-                    onAddConfig={() => createNode(CanvasNodeType.Config)}
-                    onUndo={undoCanvas}
-                    onRedo={redoCanvas}
-                    onUpload={() => handleUploadRequest()}
-                    onDelete={() => deleteNodes(new Set(selectedNodeIds))}
-                    onClear={() => setClearConfirmOpen(true)}
+                    onAddVideo={handleToolbarAddVideo}
+                    onAddAudio={handleToolbarAddAudio}
+                    onAddText={handleToolbarAddText}
+                    onAddPanorama={handleToolbarAddPanorama}
+                    onAddDirector={handleToolbarAddDirector}
+                    onAddConfig={handleToolbarAddConfig}
+                    onUndo={handleToolbarUndo}
+                    onRedo={handleToolbarRedo}
+                    onUpload={handleToolbarUpload}
+                    onDelete={handleToolbarDelete}
+                    onClear={handleToolbarClear}
                     onCanvasToolChange={setCanvasTool}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                     onAutoLayout={autoLayoutNodes}
-                    onOpenMyAssets={() => {
-                        setAssetPickerOpen(true);
-                    }}
-                    onToggleMinimap={() => setMinimapOpen(!minimapOpen)}
+                    onOpenMyAssets={handleToolbarOpenAssets}
+                    onToggleMinimap={handleToolbarToggleMinimap}
                     onGridSpacingChange={setGridSpacing}
-                    onBatchSaveAssets={() => void saveSelectedAssets()}
-                    onBatchDownload={downloadSelectedNodes}
-                    onBatchUploadCloud={() => void uploadSelectedNodesToCloud()}
+                    onBatchSaveAssets={handleToolbarBatchSave}
+                    onBatchDownload={handleToolbarBatchDownload}
+                    onBatchUploadCloud={handleToolbarBatchUpload}
                 />
 
                 {minimapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
@@ -5451,6 +5480,8 @@ function CanvasTopBar({
         return () => document.removeEventListener("pointerdown", close, true);
     }, [isTitleEditing, onFinishTitleEditing]);
 
+    const hasNewVersion = useUpdateStore((state) => state.hasNewVersion);
+
     return (
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
@@ -5509,7 +5540,10 @@ function CanvasTopBar({
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
                     <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="设置" title="设置（渠道 / API Key / 生成参数）" onClick={() => openConfigDialog(false)}>
-                        <Settings2 className="size-4" />
+                        <span className="relative inline-flex">
+                            <Settings2 className="size-4" />
+                            {hasNewVersion ? <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-emerald-500" /> : null}
+                        </span>
                     </button>
                     <button type="button" className="grid size-7 place-items-center rounded-full transition hover:bg-black/5 dark:hover:bg-white/10" style={{ color: theme.node.text }} aria-label="快捷键" onClick={() => setShortcutsOpen(true)}>
                         <Keyboard className="size-4" />

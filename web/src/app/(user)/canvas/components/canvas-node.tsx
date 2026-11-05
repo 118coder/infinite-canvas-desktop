@@ -8,7 +8,7 @@ import { ChevronRight, Image as ImageIcon, Maximize2, Music2, Pause, Play, Refre
 import { canvasThemes } from "@/lib/canvas-theme";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews } from "@/services/image-storage";
 import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -952,8 +952,16 @@ function ImageContent({
 
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
 
+    // 渲染尺寸较小时（缩小画布查看整图）优先用 768 中档预览：解码内存比 1536 主档再降 4 倍
+    const requiredLongEdge = Math.max(node.width, node.height) * scale * (globalThis.devicePixelRatio || 1);
+    const midPreviewKey = requiredLongEdge <= 768 && hasNaturalSize ? `${previewKey}@768` : "";
+    useEffect(() => {
+        if (!midPreviewKey || !content) return;
+        void ensureImagePreview(midPreviewKey, content, storageKey, previewSource, false, 768).catch(() => undefined);
+    }, [content, midPreviewKey, previewKey, previewSource, storageKey]);
+
     const imageSource = pickImageSource({
-        previewUrl: hasNaturalSize ? previewUrlFor(previewKey, previewSource) : undefined,
+        previewUrl: hasNaturalSize ? previewUrlFor(midPreviewKey || previewKey, previewSource) : undefined,
         originalUrl: content,
         naturalWidth: node.metadata?.naturalWidth,
         naturalHeight: node.metadata?.naturalHeight,

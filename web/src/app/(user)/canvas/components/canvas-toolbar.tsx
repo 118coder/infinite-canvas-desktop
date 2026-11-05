@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Segmented, Switch, Tooltip } from "antd";
 import { CircleDot, CloudUpload, Download, Eraser, FolderOpen, FolderPlus, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Moon, MousePointer2, Music2, Network, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
@@ -17,7 +17,8 @@ type ToolbarItem = {
     danger?: boolean;
 };
 
-export function CanvasToolbar({
+// memo：所有回调由调用方保证稳定引用，页面其它状态变化不再重渲染整个工具栏
+export const CanvasToolbar = memo(function CanvasToolbar({
     selectedCount,
     canvasTool,
     canUndo,
@@ -184,7 +185,7 @@ export function CanvasToolbar({
             ) : null}
         </div>
     );
-}
+});
 
 function ToolbarButton({ item, theme, activeStyle }: { item: ToolbarItem; theme: CanvasTheme; activeStyle: CSSProperties }) {
     return (

@@ -52,11 +52,16 @@ try {
         $apiMoved = $true
     }
     $env:BUILD_DESKTOP = "1"
+    $versionFile = Join-Path $PSScriptRoot "VERSION"
+    if (Test-Path $versionFile) {
+        $env:NEXT_PUBLIC_APP_VERSION = (Get-Content $versionFile -Raw).Trim()
+    }
     try {
         bunx next build
     }
     finally {
         Remove-Item Env:BUILD_DESKTOP -ErrorAction SilentlyContinue
+        Remove-Item Env:NEXT_PUBLIC_APP_VERSION -ErrorAction SilentlyContinue
     }
 }
 finally {

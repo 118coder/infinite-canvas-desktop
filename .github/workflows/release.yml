@@ -40,7 +40,7 @@ jobs:
           bun install --frozen-lockfile
           bun run build:bridge
           mv src/app/api src/app/_api
-          BUILD_DESKTOP=1 bunx next build
+          BUILD_DESKTOP=1 NEXT_PUBLIC_APP_VERSION="$(cat VERSION)" bunx next build
           mv src/app/_api src/app/api
 
       - name: Collect static output

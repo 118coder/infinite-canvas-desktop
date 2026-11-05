@@ -1,24 +1,27 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { memo, type MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "../types";
 
-export function ConnectionPath({
-    connection,
-    from,
-    to,
-    active,
-    onSelect,
-    onContextMenu,
-}: {
-    connection: CanvasConnection;
-    from: CanvasNodeData;
-    to: CanvasNodeData;
-    active: boolean;
-    onSelect: () => void;
-    onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
-}) {
+// memo 化：拖动节点时只有涉及该节点的连线重算 pathD，其余连线跳过渲染。
+// 回调只依赖稳定 setter 与 connection.id，自定义比较跳过回调是安全的。
+export const ConnectionPath = memo(
+    function ConnectionPath({
+        connection,
+        from,
+        to,
+        active,
+        onSelect,
+        onContextMenu,
+    }: {
+        connection: CanvasConnection;
+        from: CanvasNodeData;
+        to: CanvasNodeData;
+        active: boolean;
+        onSelect: () => void;
+        onContextMenu?: (event: ReactMouseEvent<SVGPathElement>) => void;
+    }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const startX = from.position.x + from.width;
     const startY = from.position.y + from.height / 2;
@@ -57,7 +60,19 @@ export function ConnectionPath({
             />
         </g>
     );
-}
+        },
+        (previous, next) =>
+            previous.connection.id === next.connection.id &&
+            previous.active === next.active &&
+            previous.from.position.x === next.from.position.x &&
+            previous.from.position.y === next.from.position.y &&
+            previous.from.width === next.from.width &&
+            previous.from.height === next.from.height &&
+            previous.to.position.x === next.to.position.x &&
+            previous.to.position.y === next.to.position.y &&
+            previous.to.width === next.to.width &&
+            previous.to.height === next.to.height,
+);
 
 export function ActiveConnectionPath({ node, handle, mouseWorld, target }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position; target?: CanvasNodeData }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];

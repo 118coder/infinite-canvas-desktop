@@ -1,6 +1,6 @@
 "use client";
 
-import { App, Button, Form, Input, Modal, Segmented, Select, Switch } from "antd";
+import { App, Button, Form, Input, Modal, Segmented, Select, Switch, Tag } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 
@@ -9,6 +9,8 @@ import type { WorkflowChannelSettings } from "@/components/workflow/workflow-cha
 import { GrokTtsVoiceSelect } from "@/components/grok-tts-voice-select";
 import { MiniMaxTtsVoiceSelect } from "@/components/minimax-tts-voice-select";
 import { ModelPicker } from "@/components/model-picker";
+import { APP_VERSION } from "@/constant/env";
+import { useUpdateStore } from "@/stores/use-update-store";
 import { fetchImageModels } from "@/services/api/image";
 import { exportDataPackage, importDataPackage, loadRepairQueue, repairMissingMedia, resolveRepairedProjects, saveRepairQueue, type DataPackageMode, type MissingMediaEntry } from "@/services/data-package";
 import { fetchUserConfig, measureUserStorageProvider, syncUserModelConfig, syncUserStorageProvider } from "@/services/api/user-config";
@@ -536,6 +538,7 @@ export function AppConfigModal() {
             }
         >
             <div className="pt-1">
+                <UpdateSection />
                 <Form layout="vertical" requiredMark={false}>
                     {allowCustomChannel && canUseRemoteChannel ? (
                         <Form.Item label="渠道模式" className="mb-5">
@@ -898,4 +901,58 @@ function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes}B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+// 「关于」区块：当前版本 + 检查更新；不强制更新，只提示并引导到下载页
+function UpdateSection() {
+    const latestVersion = useUpdateStore((state) => state.latestVersion);
+    const releases = useUpdateStore((state) => state.releases);
+    const hasNewVersion = useUpdateStore((state) => state.hasNewVersion);
+    const checking = useUpdateStore((state) => state.checking);
+    const checked = useUpdateStore((state) => state.checked);
+    const error = useUpdateStore((state) => state.error);
+    const check = useUpdateStore((state) => state.check);
+    const checkIfDue = useUpdateStore((state) => state.checkIfDue);
+    const newestRelease = releases[0];
+
+    // 打开应用后首次挂载即按 24h 节奏静默检查一次
+    useEffect(() => {
+        void checkIfDue();
+    }, [checkIfDue]);
+
+    return (
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-stone-200 p-3.5 dark:border-stone-800">
+            <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-stone-900 dark:text-stone-100">当前版本：{APP_VERSION === "dev" ? "开发版（未打包）" : APP_VERSION}</div>
+                <div className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                    {checking ? "正在检查更新..." : hasNewVersion ? `发现新版本 ${latestVersion}，可前往下载页获取，下载后替换 exe 即可。` : error ? `检查失败（${error}），稍后可重试` : checked ? "已是最新版本" : "尚未检查更新"}
+                </div>
+                {hasNewVersion && newestRelease ? (
+                    <ul className="mt-2 space-y-1">
+                        {newestRelease.items.slice(0, 4).map((item, index) => (
+                            <li key={`${item.type}-${index}`} className="flex items-start gap-1.5 text-xs leading-5 text-stone-600 dark:text-stone-300">
+                                <Tag className="m-0 shrink-0 text-[10px] leading-4" color={item.type === "新增" ? "green" : item.type === "修复" ? "red" : "blue"}>
+                                    {item.type}
+                                </Tag>
+                                <span className="min-w-0">{item.content}</span>
+                            </li>
+                        ))}
+                        {newestRelease.items.length > 4 ? <li className="pl-1 text-xs text-stone-400">…等共 {newestRelease.items.length} 项变更</li> : null}
+                    </ul>
+                ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+                <Button size="small" loading={checking} onClick={() => void check()}>
+                    检查更新
+                </Button>
+                {hasNewVersion && newestRelease ? (
+                    <a href={newestRelease.url} target="_blank" rel="noreferrer">
+                        <Button size="small" type="primary">
+                            前往下载
+                        </Button>
+                    </a>
+                ) : null}
+            </div>
+        </div>
+    );
 }

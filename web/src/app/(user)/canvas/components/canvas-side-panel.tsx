@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import { Empty, Input, Pagination, Select, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, ChevronRight, Clapperboard, Eye, FileText, Group, Image as ImageIcon, Music2, Plus, Search, Settings2, Type, Video } from "lucide-react";
@@ -13,7 +13,7 @@ import { useAssetFilters } from "@/hooks/use-asset-filters";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
-import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, smallImagePreviewKey, SMALL_IMAGE_PREVIEW_MAX_EDGE, subscribeImagePreviews } from "@/services/image-storage";
+import { ensureImagePreview, previewUrlFor, smallImagePreviewKey, SMALL_IMAGE_PREVIEW_MAX_EDGE, subscribeImagePreviews } from "@/services/image-storage";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
@@ -176,13 +176,53 @@ function PanelTabButton({ label, active, theme, onClick }: { label: string; acti
     );
 }
 
+const NODE_ROW_HEIGHT = 56;
+const NODE_ROW_GAP = 6;
+const NODE_ROW_STRIDE = NODE_ROW_HEIGHT + NODE_ROW_GAP;
+const NODE_WINDOW_EXTRA = 8;
+
 function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; theme: CanvasTheme }) {
     const projectId = useCanvasUiStore((state) => state.openProjectId) || "";
     const [keyword, setKeyword] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("all");
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
+    const rowsScrollRef = useRef<HTMLDivElement | null>(null);
+    // ⑤ 等高行窗口化：只挂载滚动窗口附近的行，长列表 DOM 数量恒定
+    const [windowRange, setWindowRange] = useState({ start: 0, end: 40 });
+    const updateWindow = useCallback((scrollTop: number, clientHeight: number) => {
+        const start = Math.max(0, Math.floor(scrollTop / NODE_ROW_STRIDE) - NODE_WINDOW_EXTRA);
+        const end = Math.ceil((scrollTop + clientHeight) / NODE_ROW_STRIDE) + NODE_WINDOW_EXTRA;
+        setWindowRange((current) => (current.start === start && current.end === end ? current : { start, end }));
+    }, []);
+    // ④ 滚动期间暂缓预览订阅触发的重渲染：滚动停止 160ms 后再统一刷新，边滚边渲染缩略图替换不再抖动
+    const [, setPreviewRevision] = useState(0);
+    const scrollHoldRef = useRef(false);
+    const previewDirtyRef = useRef(false);
+    const scrollHoldTimerRef = useRef<number | null>(null);
+    useEffect(
+        () =>
+            subscribeImagePreviews(() => {
+                if (scrollHoldRef.current) previewDirtyRef.current = true;
+                else setPreviewRevision((value) => value + 1);
+            }),
+        [],
+    );
+    const handleRowsScroll = useCallback(
+        (event: ReactUIEvent<HTMLDivElement>) => {
+            scrollHoldRef.current = true;
+            if (scrollHoldTimerRef.current) window.clearTimeout(scrollHoldTimerRef.current);
+            scrollHoldTimerRef.current = window.setTimeout(() => {
+                scrollHoldRef.current = false;
+                if (previewDirtyRef.current) {
+                    previewDirtyRef.current = false;
+                    setPreviewRevision((value) => value + 1);
+                }
+            }, 160);
+            updateWindow(event.currentTarget.scrollTop, event.currentTarget.clientHeight);
+        },
+        [updateWindow],
+    );
 
     // 40px 行缩略图用 256px 小档预览（解码体积比 1536 主档小一个量级），缺了就地生成
     useEffect(() => {
@@ -222,9 +262,29 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
     }, [collapsedGroups, filtered, nodes]);
 
     useEffect(() => {
+        const container = rowsScrollRef.current;
+        if (!container) return;
+        updateWindow(container.scrollTop, container.clientHeight || 720);
+    }, [treeRows, updateWindow]);
+
+    useEffect(() => {
         const selectedId = Array.from(selectedNodeIds)[0];
-        if (selectedId) rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }, [selectedNodeIds]);
+        if (!selectedId) return;
+        const container = rowsScrollRef.current;
+        const index = treeRows.findIndex((row) => row.node.id === selectedId);
+        if (index < 0 || !container) {
+            rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            return;
+        }
+        const top = index * NODE_ROW_STRIDE;
+        if (top < container.scrollTop || top + NODE_ROW_HEIGHT > container.scrollTop + container.clientHeight) {
+            // 目标行未被窗口挂载时直接定位滚动窗口
+            container.scrollTop = Math.max(0, top - container.clientHeight / 2 + NODE_ROW_HEIGHT / 2);
+            updateWindow(container.scrollTop, container.clientHeight);
+        } else {
+            rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+    }, [selectedNodeIds, treeRows, updateWindow]);
 
     return (
         <div className="flex h-full flex-col">
@@ -236,10 +296,12 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
             <div className="px-3 pb-2.5">
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索节点" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
             </div>
-            <div className="thin-scrollbar overscroll-contain min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            <div ref={rowsScrollRef} className="thin-scrollbar overscroll-contain min-h-0 flex-1 overflow-y-auto px-2 pb-3" onScroll={handleRowsScroll}>
                 {treeRows.length ? (
-                    <div className="space-y-1.5">
-                        {treeRows.map(({ node, depth, hasChildren }) => {
+                    <>
+                        <div style={{ height: windowRange.start * NODE_ROW_STRIDE }} />
+                        <div className="space-y-1.5">
+                            {treeRows.slice(windowRange.start, windowRange.end).map(({ node, depth, hasChildren }) => {
                             const Icon = NODE_TYPE_ICON[node.type] || FileText;
                             const hasImage = isCanvasImageNodeType(node.type) && node.metadata?.content;
                             const active = selectedNodeIds.has(node.id);
@@ -247,7 +309,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                             const rowKey = `canvas-node:${projectId}:${node.id}`;
                             const rowImage = previewUrlFor(smallImagePreviewKey(rowKey), previewSource) || previewUrlFor(rowKey, previewSource) || node.metadata?.content;
                             return (
-                                <div key={node.id} className={cn("relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_64px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
+                                <div key={node.id} className={cn("relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_56px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
                                     {depth ? <span className="pointer-events-none absolute -left-3 top-[calc(-50%-0.4rem)] h-[calc(100%+0.4rem)] w-3 rounded-bl-md border-b border-l opacity-45" style={{ borderColor: theme.node.stroke }} /> : null}
                                     {node.type === CanvasNodeType.Group && hasChildren ? (
                                         <button type="button" onClick={() => setCollapsedGroups((current) => (current.has(node.id) ? new Set([...current].filter((id) => id !== node.id)) : new Set(current).add(node.id)))} className="ml-1 grid size-6 shrink-0 place-items-center opacity-55 transition hover:opacity-100" aria-label={node.title}>
@@ -277,8 +339,10 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                                     </button>
                                 </div>
                             );
-                        })}
-                    </div>
+                            })}
+                        </div>
+                        <div style={{ height: Math.max(0, (treeRows.length - windowRange.end) * NODE_ROW_STRIDE) }} />
+                    </>
                 ) : (
                     <div className="pt-16 text-center text-sm opacity-40">{nodes.length ? "无匹配节点" : "画布暂无节点"}</div>
                 )}

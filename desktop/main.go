@@ -34,6 +34,12 @@ func main() {
 	// WebView2 窗口必须运行在主 OS 线程
 	runtime.LockOSThread()
 
+	// 启用 GPU 光栅化与零拷贝合成：大画布平移/缩放由 GPU 合成，降低 CPU 合成瓶颈。
+	// WebView2 加载器在创建环境前读取该环境变量；用户已手动设置时尊重用户值。
+	if os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") == "" {
+		os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--enable-gpu-rasterization --enable-zero-copy")
+	}
+
 	// 数据目录锚定到 exe 所在目录，保证便携性
 	if exePath, err := os.Executable(); err == nil {
 		_ = os.Chdir(filepath.Dir(exePath))
