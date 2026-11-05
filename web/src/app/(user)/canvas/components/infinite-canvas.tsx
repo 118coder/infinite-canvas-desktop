@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -45,14 +45,47 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
+    // 手势（平移/滚轮缩放）期间的实时 transform：直接写 DOM，state 只在手势结束后提交。
+    // 中途任何 React 重渲染都会把手势 transform 覆盖回旧 state，造成“画面瞬移回退一帧”的刷新感，
+    // 所以每次渲染后用 layout effect 把最新手势 transform 重新套回去。
+    const liveTransformRef = useRef<ViewportTransform | null>(null);
+    const wheelGestureRef = useRef<ViewportTransform | null>(null);
+    const wheelCommitTimerRef = useRef<number | null>(null);
+    const wheelFrameRef = useRef<number | null>(null);
+    const viewportPropRef = useRef(viewport);
+    const gestureStartViewportRef = useRef<ViewportTransform>(viewport);
+    viewportPropRef.current = viewport;
 
     useEffect(() => {
         scaleRef.current = viewport.k;
     }, [viewport.k]);
 
+    // 手势进行中：渲染后重新套用最新手势 transform，避免重渲染把 DOM 打回旧 state；
+    // 手势已结束或被外部提交（适应全部节点、聚焦节点等）打断：清掉 live 记录，让外部值生效
+    useLayoutEffect(() => {
+        if (panState.current.isPanning) {
+            const live = liveTransformRef.current;
+            if (live) applyViewportTransform(live, worldRef.current, gridRef.current, gridSizeRef.current);
+            return;
+        }
+        if (wheelGestureRef.current) {
+            if (viewportPropRef.current !== gestureStartViewportRef.current) {
+                cancelWheelGesture();
+                liveTransformRef.current = null;
+                return;
+            }
+            const live = liveTransformRef.current;
+            if (live) applyViewportTransform(live, worldRef.current, gridRef.current, gridSizeRef.current);
+            return;
+        }
+        liveTransformRef.current = null;
+    });
+
     useEffect(
         () => () => {
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
+            if (wheelFrameRef.current) cancelAnimationFrame(wheelFrameRef.current);
+            if (wheelCommitTimerRef.current) clearTimeout(wheelCommitTimerRef.current);
         },
         [],
     );
@@ -79,6 +112,12 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             panState.current.isPanning = false;
             setIsPanning(false);
             document.body.style.cursor = "";
+            // 失焦打断平移时把已发生的位移提交给 state，避免 DOM 与 state 脱节
+            if (nextViewportRef.current) {
+                applyLiveTransform(nextViewportRef.current);
+                onViewportChange(nextViewportRef.current);
+                nextViewportRef.current = null;
+            }
         };
 
         window.addEventListener("keydown", handleKeyDown);
@@ -91,6 +130,32 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         };
     }, []);
 
+    const applyLiveTransform = (next: ViewportTransform) => {
+        liveTransformRef.current = next;
+        applyViewportTransform(next, worldRef.current, gridRef.current, gridSizeRef.current);
+    };
+
+    const cancelWheelGesture = () => {
+        if (wheelCommitTimerRef.current) {
+            clearTimeout(wheelCommitTimerRef.current);
+            wheelCommitTimerRef.current = null;
+        }
+        if (wheelFrameRef.current) {
+            cancelAnimationFrame(wheelFrameRef.current);
+            wheelFrameRef.current = null;
+        }
+        wheelGestureRef.current = null;
+    };
+
+    // 滚轮手势尚未提交时立刻把结果交给 state：开始平移前、或手势需要让位给外部操作时调用
+    const flushPendingWheel = () => {
+        const pending = wheelGestureRef.current;
+        if (!pending) return;
+        cancelWheelGesture();
+        liveTransformRef.current = pending;
+        onViewportChange(pending);
+    };
+
     const handleWheel = (event: React.WheelEvent<HTMLDivElement> | WheelEvent) => {
         const target = event.target instanceof Element ? event.target : null;
         if (event instanceof WheelEvent) {
@@ -99,22 +164,36 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             event.stopPropagation();
         } else if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
 
+        // 缩放手势期间只写 DOM 不进 state：每个滚轮事件都 setState 会让整棵画布树（含全部节点）重渲染，
+        // 大画布下明显卡顿；停手 140ms 后一次性提交，节点反缩放面板靠 --canvas-inverse-scale 跟随。
+        const live = wheelGestureRef.current || liveTransformRef.current || viewport;
         const delta = -event.deltaY;
         const factor = Math.pow(1.1, delta / 100);
-        const newScale = Math.min(Math.max(viewport.k * factor, 0.05), 5);
+        const newScale = Math.min(Math.max(live.k * factor, 0.05), 5);
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
-        const worldX = (mouseX - viewport.x) / viewport.k;
-        const worldY = (mouseY - viewport.y) / viewport.k;
+        const worldX = (mouseX - live.x) / live.k;
+        const worldY = (mouseY - live.y) / live.k;
+        const next = { x: mouseX - worldX * newScale, y: mouseY - worldY * newScale, k: newScale };
 
-        onViewportChange({
-            x: mouseX - worldX * newScale,
-            y: mouseY - worldY * newScale,
-            k: newScale,
-        });
+        if (!wheelGestureRef.current) gestureStartViewportRef.current = viewportPropRef.current;
+        wheelGestureRef.current = next;
+        scaleRef.current = newScale;
+        if (!wheelFrameRef.current) {
+            wheelFrameRef.current = requestAnimationFrame(() => {
+                wheelFrameRef.current = null;
+                const pending = wheelGestureRef.current;
+                if (pending) applyLiveTransform(pending);
+            });
+        }
+        if (wheelCommitTimerRef.current) clearTimeout(wheelCommitTimerRef.current);
+        wheelCommitTimerRef.current = window.setTimeout(() => {
+            wheelCommitTimerRef.current = null;
+            flushPendingWheel();
+        }, 140);
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -132,12 +211,14 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             event.preventDefault();
             if (activeTool === "pan") event.stopPropagation();
             event.currentTarget.setPointerCapture(event.pointerId);
+            flushPendingWheel();
+            const live = liveTransformRef.current || viewport;
             panState.current = {
                 isPanning: true,
                 startX: event.clientX,
                 startY: event.clientY,
-                initialX: viewport.x,
-                initialY: viewport.y,
+                initialX: live.x,
+                initialY: live.y,
                 hasMoved: false,
                 startedOnBackground: isBackgroundClick,
             };
@@ -184,7 +265,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 frameRef.current = null;
                 // 拖动画布时直接写 transform，只做一次合成，不触发 React 重渲染；
                 // 抬手时再把最终 viewport 提交给上层，十几张 4K 图也不会掉帧。
-                if (nextViewportRef.current) applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current, gridSizeRef.current);
+                if (nextViewportRef.current) applyLiveTransform(nextViewportRef.current);
             });
         };
 
@@ -198,7 +279,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             setIsPanning(false);
             document.body.style.cursor = "";
             if (nextViewportRef.current) {
-                applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current, gridSizeRef.current);
+                applyLiveTransform(nextViewportRef.current);
                 onViewportChange(nextViewportRef.current);
                 nextViewportRef.current = null;
             }
@@ -310,9 +391,12 @@ function CanvasGrid({ viewport, mode, gridSize, gridRef }: { viewport: ViewportT
     );
 }
 
-// 平移期间直接改 DOM 样式，避免每帧 setState 触发整棵画布树重渲染
+// 平移/缩放手势期间直接改 DOM 样式，避免每帧 setState 触发整棵画布树重渲染
 function applyViewportTransform(next: ViewportTransform, world: HTMLElement | null, grid: HTMLElement | null, gridSize: number) {
-    if (world) world.style.transform = `translate(${next.x}px, ${next.y}px) scale(${next.k})`;
+    if (world) {
+        world.style.transform = `translate(${next.x}px, ${next.y}px) scale(${next.k})`;
+        world.style.setProperty("--canvas-inverse-scale", String(1 / next.k));
+    }
     if (grid) {
         const size = gridSize * next.k;
         grid.style.backgroundSize = `${size}px ${size}px`;

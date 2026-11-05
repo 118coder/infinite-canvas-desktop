@@ -448,7 +448,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [alignmentGuides, setAlignmentGuides] = useState<CanvasAlignmentGuides>({});
     const [referencePickerNodeId, setReferencePickerNodeId] = useState<string | null>(null);
-    const [canvasNow, setCanvasNow] = useState(Date.now());
     const resolvedAgentConfig = useMemo<CanvasAgentConfig>(
         () => {
             const defaults = { textApiMode: "chat" as const, autoGenerateMedia: false };
@@ -485,7 +484,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const pollingAudioNodeIdsRef = useRef(new Map<string, AbortController>());
     // 任务状态连续查询失败次数：达到阈值就把节点标成失败，避免永远卡在"生成中"
     const taskPollFailuresRef = useRef(new Map<string, number>());
-    const hasLoadingTimedNodes = nodes.some((node) => node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && (node.type === CanvasNodeType.Video || isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Audio));
 
     const rememberNodeTask = useCallback(<T extends CanvasImageTask | CanvasAudioTask | VideoResponse,>(nodeId: string, id: string | undefined, task: T) => {
         const run = nodeTaskRunsRef.current.get(`${nodeId}:${id}`);
@@ -900,13 +898,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         const timer = window.setInterval(pollCanvasTasks, VIDEO_POLL_INTERVAL_MS);
         return () => window.clearInterval(timer);
     }, [effectiveConfig, handleStopNode, isAiConfigReady, isNodeTaskActive, projectLoaded, registerTaskPollFailure, rememberNodeTask, resetTaskPollFailure]);
-
-    useEffect(() => {
-        if (!hasLoadingTimedNodes) return;
-        setCanvasNow(Date.now());
-        const timer = window.setInterval(() => setCanvasNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
-    }, [hasLoadingTimedNodes]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
@@ -4888,7 +4879,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             batchMotion={batchMotionById.get(node.id)}
                             showImageInfo={showImageInfo}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || []}
-                            now={node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && (node.type === CanvasNodeType.Video || isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Audio) ? canvasNow : undefined}
                             renderPanel={(panelNode) =>
                                 panelNode.type === CanvasNodeType.Config ? (
                                     <CanvasConfigComposer

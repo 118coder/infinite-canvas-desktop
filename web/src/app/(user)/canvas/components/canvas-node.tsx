@@ -148,6 +148,18 @@ export const CanvasNode = React.memo(function CanvasNode({
         keepRatio: false,
         ratio: 1,
     });
+    // 拉伸期间按帧合并 onResize：mousemove 触发频率高于渲染帧，逐事件 setNodes 会让整棵画布树跟着重渲染
+    const resizeFrameRef = useRef<number | null>(null);
+    const pendingResizeRef = useRef<{ width: number; height: number; position?: Position } | null>(null);
+    const flushPendingResize = useCallback(() => {
+        if (resizeFrameRef.current) {
+            cancelAnimationFrame(resizeFrameRef.current);
+            resizeFrameRef.current = null;
+        }
+        const pending = pendingResizeRef.current;
+        pendingResizeRef.current = null;
+        if (pending) onResize(data.id, pending.width, pending.height, pending.position);
+    }, [data.id, onResize]);
 
     useLayoutEffect(() => {
         const { naturalWidth, naturalHeight, clientTaskId, isBatchRoot, batchRootId } = data.metadata || {};
@@ -245,19 +257,31 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }
             }
 
-            onResize(data.id, width, height, {
-                x: fromLeft ? startRight - width : resizeRef.current.startLeft,
-                y: fromTop ? startBottom - height : resizeRef.current.startTop,
-            });
+            pendingResizeRef.current = {
+                width,
+                height,
+                position: {
+                    x: fromLeft ? startRight - width : resizeRef.current.startLeft,
+                    y: fromTop ? startBottom - height : resizeRef.current.startTop,
+                },
+            };
+            if (!resizeFrameRef.current) {
+                resizeFrameRef.current = requestAnimationFrame(() => {
+                    resizeFrameRef.current = null;
+                    const pending = pendingResizeRef.current;
+                    pendingResizeRef.current = null;
+                    if (pending) onResize(data.id, pending.width, pending.height, pending.position);
+                });
+            }
         },
         [data.id, onResize, scale],
     );
-
     const handleResizeUp = useCallback(() => {
         resizeRef.current.isResizing = false;
+        flushPendingResize();
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
-    }, [handleResizeMove]);
+    }, [flushPendingResize, handleResizeMove]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
@@ -282,6 +306,11 @@ export const CanvasNode = React.memo(function CanvasNode({
         return () => {
             window.removeEventListener("mousemove", handleResizeMove);
             window.removeEventListener("mouseup", handleResizeUp);
+            if (resizeFrameRef.current) {
+                cancelAnimationFrame(resizeFrameRef.current);
+                resizeFrameRef.current = null;
+                pendingResizeRef.current = null;
+            }
         };
     }, [handleResizeMove, handleResizeUp]);
 
