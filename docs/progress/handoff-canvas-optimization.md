@@ -38,24 +38,28 @@
 
 ## 二、必须了解的机制（改错会直接回归）
 
-### 预览三档体系（`services/image-storage.ts` + `lib/image-thumbnail.ts`）
+### 图片多级 LOD（`lib/image-thumbnail.ts` + `services/image-storage.ts` + `components/canvas-node.tsx`）
 
-- 档位：主档 1536（key 原样）、中档 `@768`、小档 `@256`（`smallImagePreviewKey()` 生成后缀 key）
-- `ensureImagePreview(key, url, storageKey, source, cachedOnly, maxEdge?)`：内部有请求去重、来源失效、全局队列（最多并行 2 张）
-- **任何「删除未使用预览」的名单必须包含所有档位的 key**：`canvas-client-page.tsx` restore 里 `previewKeys` 已用 `flatMap` 同时含主档与 `@256`；若以后加新档位，记得同步扩展该名单，否则每次打开画布会被误删重生成
-- 生成条件：`blob:`/`data:` 本地源与 comfy 源不生成（`ensureImagePreview` 内部直接删除并返回 undefined），调用方需有原图回退
+- 档位 `IMAGE_LOD_LEVELS = [256, 768, 1536, 2048]`；`lodKeyFor(baseKey, level)` 生成 key，1536 用无后缀主档，其余用 `@N`
+- **画布显示永远不用 4K 原图**：`ImageContent` 按屏幕实际渲染像素离散选档（`pickLodLevel`），从目标档一路回退到 `@256`（`lodFallbackKeys`）；任何档位都未就绪时只画占位色。只有本地 blob/data/base64 源（不生成预览）才允许用原内容，原图仅用于全屏预览
+- **任何「删除/清理预览」的名单必须包含所有档位**：`canvas-client-page.tsx` restore 的 `previewKeys` 用 `allLodKeys()`；`deleteImagePreviews()` 内部也会把 `canvas-node:` 主档自动展开成全部档位。新增档位必须同步扩展 `IMAGE_LOD_LEVELS`
+- 生成策略：打开画布时只为新图排队生成 `@256`；1536/2048 高档由 `ImageContent` 在节点放大进入完整模式时按需生成。队列只在 `requestIdleCallback` 空闲时段推进，手势期间整体停摆（`setCanvasGestureActive`）
+- 生成条件：`blob:`/`data:` 本地源与 comfy 源不生成（`ensureImagePreview` 内部直接删除并返回 undefined）
 
-### 画布手势（`components/infinite-canvas.tsx`）
+### 视口双通道与画布手势（`stores/use-viewport-store.ts` + `components/infinite-canvas.tsx`）
 
-- 平移/缩放手势期间 transform **只直写 DOM**（`liveTransformRef` + `applyViewportTransform`），state 在手势结束/空闲 140ms 后提交
-- `useLayoutEffect` 兜底：任何中途 React 重渲染都会重新套用最新手势 transform，否则会出现「画面瞬移回退一帧」的刷新感——**不要移除这段**
-- 滚轮手势被外部提交（适应全部节点/聚焦节点）打断时会自动放弃；新增外部 viewport 操作不需要额外处理
-- `applyViewportTransform` 同时写 `--canvas-inverse-scale`（节点底部面板反缩放依赖它）
+- 视口唯一真源是 `viewportStore.getLive()`，任何屏幕→世界坐标换算都必须读它；`applyLive()` 逐帧只写 DOM，`commit()` 只在手势结束/一次性命令时触发
+- 所有外部视口操作（小地图拖拽、聚焦节点动画、缩放滑杆、适应视图、重置）统一走 `applyLive` + 结束 `commit`，**不要再引入 `setViewport`**
+- `useLayoutEffect` 兜底：任何中途 React 重渲染都会重新套用最新手势 transform，否则会出现「画面瞬移回退一帧」——**不要移除这段**
+- 每帧只写 world 的 `translate3d` 与网格位移；`--canvas-inverse-scale`、`background-size` 只在缩放变化时写。手势期间 world 关 `pointer-events`，容器加 `.canvas-gesture`
+- `beginGesture/endGesture` 有嵌套计数，同时驱动预览队列门控；页面卸载时必须把未结束的手势全部 end 掉
 
-### 渲染裁剪与 memo 约定
+### 渲染裁剪、DOM LOD 与 memo 约定
 
-- 画布节点本体已有视口裁剪：`canvas-client-page.tsx` 的 `visibleNodes`（边距 = 280 / k）
-- `ConnectionPath`、`CanvasToolbar`、`CanvasZoomControls` 都是 memo：**给它们传新回调必须 useCallback 保持稳定引用**，否则 memo 失效
+- 视口裁剪在独立的 `components/canvas-stage.tsx`：订阅裁剪 tick，用 `canvas-spatial-index.ts` 网格桶增量计算，边距恒定 280 屏幕像素
+- **两级 LOD**：缩小（`live.k < 0.45`）或视口内节点超过 60 个时，全部渲染 `CanvasNodeTile`（轻量 div + `@256`），不挂载完整 `CanvasNode`；放大后视口内节点少才用完整节点。判定用 live.k，传给节点的 `scale` 用 committed.k（手势中冻结，避免反复换档解码）
+- `CanvasNode`、`CanvasNodeTile`、`ConnectionPath`、`CanvasToolbar`、`CanvasZoomControls`、`CanvasSidePanel` 都是 memo：**传给它们的回调必须 useCallback 保持稳定引用**，否则 memo 失效
+- 连线层按视口裁剪，未激活连线合并为单条 path；不要恢复 10000×10000 固定 SVG 或 `translateZ(0)`
 - 左栏列表虚拟化：行高必须保持等高 56px（`NODE_ROW_HEIGHT`），改行内容高度要同步改 stride 与 `contain-intrinsic-size`；选中定位逻辑依赖等高假设
 
 ### 检查更新

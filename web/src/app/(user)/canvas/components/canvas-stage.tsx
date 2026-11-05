@@ -28,9 +28,14 @@ type CanvasStageProps = {
     collapsingBatchIds: Set<string>;
     onSelectConnection: (connectionId: string) => void;
     onConnectionContextMenu: (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => void;
-    renderNode: (node: CanvasNodeData, scale: number) => ReactNode;
+    renderNode: (node: CanvasNodeData, scale: number, lightweight: boolean) => ReactNode;
     children?: ReactNode;
 };
+
+// 缩到这个比例以下、或视口内完整节点超过上限时，全部改用轻量瓦片。
+// 缩放手势期间 scale 取 committed 值（冻结），因此不会在拖动手势中反复切换节点类型。
+const LIGHTWEIGHT_SCALE = 0.45;
+const FULL_NODE_LIMIT = 60;
 
 /**
  * 画布世界层的渲染子树。它单独订阅视口的裁剪 tick 与提交后的缩放，
@@ -50,6 +55,9 @@ export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, 
     }, [index, nodes, nodeById, collapsingBatchIds, cullKey, scale, screenWidth, screenHeight]);
 
     const { normalPath, hitConnections, activeConnections } = useMemo(() => collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds }), [connections, nodeById, rect, selectedConnectionId, relatedConnectionIds]);
+    // 用 live 缩放判定，缩放手势跨过阈值时立即切到瓦片，不会在手势中继续挂载完整节点；
+    // 平移时 k 不变，判定保持稳定。传给节点的 scale 仍是 committed 值，避免手势中反复换档解码。
+    const lightweight = viewportStore.getLive().k < LIGHTWEIGHT_SCALE || visibleNodes.length > FULL_NODE_LIMIT;
 
     return (
         <>
@@ -94,7 +102,7 @@ export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, 
                 {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
             </svg>
 
-            {visibleNodes.map((node) => renderNode(node, scale))}
+            {visibleNodes.map((node) => renderNode(node, scale, lightweight))}
 
             {selectionBox ? (
                 <svg

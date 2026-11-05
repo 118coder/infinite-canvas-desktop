@@ -14,6 +14,7 @@ import { comfyOutputStorageKey, getWorkflowTask, submitWorkflowTask, workflowMed
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { channelProtocolForConfig, defaultConfig, resolveModelForCapability, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, setCanvasGestureActive, smallImagePreviewKey, SMALL_IMAGE_PREVIEW_MAX_EDGE, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
+import { allLodKeys } from "@/lib/image-thumbnail";
 import { downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -68,6 +69,7 @@ import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canva
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
+import { CanvasNodeTile } from "../components/canvas-node-tile";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode, type CanvasVideoFrameOption } from "../components/canvas-node-prompt-panel";
 import type { CanvasVideoResourceOption } from "../components/canvas-video-settings-popover";
 import { CanvasToolbar } from "../components/canvas-toolbar";
@@ -680,13 +682,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         const restore = async () => {
             const storedViewport = await loadViewport(projectId).catch(() => null);
             const resetNodes = resetInterruptedGeneration(project.nodes);
+            // 多档 LOD：清理名单必须包含全部档位，否则打开画布会把未列入的档位误删重生成。
             const previewKeys = new Set(
                 resetNodes
                     .filter((node) => isCanvasImageNodeType(node.type))
-                    .flatMap((node) => {
-                        const key = `canvas-node:${projectId}:${node.id}`;
-                        return [key, smallImagePreviewKey(key)];
-                    }),
+                    .flatMap((node) => allLodKeys(`canvas-node:${projectId}:${node.id}`)),
             );
             // 恢复链路任何一步抛错都不能让画布停在骨架屏：先渲染节点，媒体再兜底。
             let restoredNodes: CanvasNodeData[] = resetNodes;
@@ -701,17 +701,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         return ensureImagePreview(`canvas-node:${projectId}:${node.id}`, content, storageKey, source, true).catch(() => undefined);
                     }),
                 );
-                // 主档就绪后稍作等待，再后台排队生成 256 小档：
-                // 左栏 40px 缩略图随开随用，滚动列表时不再边滚边生成替换
-                window.setTimeout(() => {
-                    resetNodes.forEach((node) => {
-                        if (!isCanvasImageNodeType(node.type) || !node.metadata?.content) return;
-                        const content = node.metadata.content;
-                        const storageKey = node.metadata.storageKey;
-                        const source = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
-                        void ensureImagePreview(smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`), content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
-                    });
-                }, 3000);
+                // @256 小档由下方 previewSources effect 在 setNodes 后统一排队生成，
+                // 队列只在空闲时段推进，不再额外延时重复触发 500 次请求。
                 restoredNodes = await hydrateCanvasImagesSafe(resetNodes);
             } catch (error) {
                 console.error("恢复画布媒体失败，已回退为原始节点", error);
@@ -992,7 +983,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             if (!content && !storageKey) return;
             const source = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
             next.set(node.id, source);
-            if (previous.get(node.id) !== source) void ensureImagePreview(`canvas-node:${projectId}:${node.id}`, content, storageKey, source);
+            // 新图只排队生成 @256 小档（缩小态瓦片与侧栏共用）；
+            // 1536/2048 高档由 ImageContent 在节点真正放大进入完整模式时按需生成，
+            // 500 张 4K 图不会在打开画布时一次性生成 500 张大档位。
+            if (previous.get(node.id) !== source) {
+                void ensureImagePreview(smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`), content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
+            }
         });
 
         const removed = [...previous.keys()].filter((id) => !next.has(id));
@@ -4835,6 +4831,19 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId });
     }, []);
 
+    // 完整节点与轻量瓦片共用这两个稳定回调，保证瓦片的 memo 在批量视口更新时不被击穿。
+    const openNodeContextMenu = useCallback((event: ReactMouseEvent, nodeId: string) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!selectedNodeIdsRef.current.has(nodeId)) {
+            selectedNodeIdsRef.current = new Set([nodeId]);
+            setSelectedNodeIds(new Set([nodeId]));
+            setToolbarNodeId(nodeId);
+        }
+        setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId });
+    }, []);
+    const openTilePreview = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
+
     const handleSidePanelWidthChange = useCallback((width: number) => setSidePanel((current) => ({ ...current, width })), []);
     const handleAssetDragStart = useCallback((payload: InsertAssetPayload) => { draggedAssetPayloadRef.current = payload; }, []);
     const handleAssetDragEnd = useCallback(() => {
@@ -4937,7 +4946,20 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         collapsingBatchIds={collapsingBatchIds}
                         onSelectConnection={selectConnection}
                         onConnectionContextMenu={openConnectionContextMenu}
-                        renderNode={(node, scale) => (
+                        renderNode={(node, scale, lightweight) => {
+                            if (lightweight) {
+                                return (
+                                    <CanvasNodeTile
+                                        key={node.id}
+                                        data={node}
+                                        isSelected={selectedNodeIds.has(node.id)}
+                                        onMouseDown={handleNodeMouseDown}
+                                        onContextMenu={openNodeContextMenu}
+                                        onViewImage={openTilePreview}
+                                    />
+                                );
+                            }
+                            return (
                             <CanvasNode
                                 key={node.id}
                                 data={node}
@@ -5027,19 +5049,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 onRetry={(node) => void handleRetryNode(node)}
                                 onViewImage={(node) => setPreviewNodeId(node.id)}
                                 onSelectReference={selectNodeReference}
-                                onContextMenu={(event, id) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    // 右键未选中的节点时，将其设为唯一选中节点
-                                    if (!selectedNodeIdsRef.current.has(id)) {
-                                        selectedNodeIdsRef.current = new Set([id]);
-                                        setSelectedNodeIds(new Set([id]));
-                                        setToolbarNodeId(id);
-                                    }
-                                    setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
-                                }}
+                                onContextMenu={openNodeContextMenu}
                             />
-                        )}
+                            );
+                        }}
                     >
                         {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
                         {nodeCreatePosition ? (

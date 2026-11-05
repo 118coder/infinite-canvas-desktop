@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { ChevronRight, Image as ImageIcon, Maximize2, Music2, Pause, Play, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { pickImageSource } from "@/lib/image-thumbnail";
+import { lodFallbackKeys, lodKeyFor, pickImageSource, pickLodLevel, requiredLodLongEdge } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { ensureImagePreview, getImagePreviewVersion, previewUrlFor, resolveImageUrl, subscribeImagePreview } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewVersion, previewUrlFor, resolveImageUrl, skipsImagePreview, subscribeImagePreview } from "@/services/image-storage";
 import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -946,64 +946,61 @@ function ImageContent({
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const content = node.metadata?.content || "";
     const storageKey = node.metadata?.storageKey;
-    const previewKey = `canvas-node:${projectId}:${node.id}`;
+    const baseKey = `canvas-node:${projectId}:${node.id}`;
     const previewSource = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
-    const hasNaturalSize = Boolean(node.metadata?.naturalWidth && node.metadata?.naturalHeight);
+    // blob/data/base64/comfy 源不会生成预览，只有这类源才允许在画布里直接使用原图。
+    const isLocalSource = !content || skipsImagePreview(content, storageKey);
 
-    // 渲染尺寸较小时（缩小画布查看整图）优先用 768 中档预览：解码内存比 1536 主档再降 4 倍
-    const requiredLongEdge = Math.max(node.width, node.height) * scale * (globalThis.devicePixelRatio || 1);
-    const midPreviewKey = requiredLongEdge <= 768 && hasNaturalSize ? `${previewKey}@768` : "";
-
-    // 按 previewKey 与 midPreviewKey 精确订阅：只有这两个 key 的预览生成/失效时该节点才重渲染，
-    // 不再订阅全局 revision，避免平移/缩放时把画布上所有图片节点一起拖下水
+    // 按屏幕实际像素需求离散选档。放大到最高档仍不足时拉伸 @2048，绝不回退 4K 原图。
+    const targetLevel = pickLodLevel(requiredLodLongEdge(node.width, node.height, scale));
+    const targetKey = lodKeyFor(baseKey, targetLevel);
+    const fallbackToken = `${baseKey}|${targetLevel}`;
+    // 订阅目标档及其以下所有档位，任一档位就绪就立即渐进显示；不再订阅全局 revision。
+    const fallbackKeys = useMemo(() => lodFallbackKeys(baseKey, targetLevel), [fallbackToken]);
     const subscribePreview = useCallback(
         (onStoreChange: () => void) => {
-            const unsubscribeMain = subscribeImagePreview(previewKey, onStoreChange);
-            const unsubscribeMid = subscribeImagePreview(midPreviewKey, onStoreChange);
-            return () => {
-                unsubscribeMain();
-                unsubscribeMid();
-            };
+            const offs = fallbackKeys.map((key) => subscribeImagePreview(key, onStoreChange));
+            return () => offs.forEach((off) => off());
         },
-        [previewKey, midPreviewKey],
+        [fallbackToken],
     );
-    // 两个 key 的版本号相加作为快照：任一预览变化都会让和递增，从而触发本节点刷新
     const getPreviewSnapshot = useCallback(
-        () => getImagePreviewVersion(previewKey) + getImagePreviewVersion(midPreviewKey),
-        [previewKey, midPreviewKey],
+        () => fallbackKeys.reduce((sum, key) => sum + getImagePreviewVersion(key), 0),
+        [fallbackToken],
     );
     useSyncExternalStore(subscribePreview, getPreviewSnapshot, getPreviewSnapshot);
-    useEffect(() => {
-        if (!midPreviewKey || !content) return;
-        void ensureImagePreview(midPreviewKey, content, storageKey, previewSource, false, 768).catch(() => undefined);
-    }, [content, midPreviewKey, previewKey, previewSource, storageKey]);
 
-    const imageSource = pickImageSource({
-        previewUrl: hasNaturalSize ? previewUrlFor(midPreviewKey || previewKey, previewSource) : undefined,
-        originalUrl: content,
-        naturalWidth: node.metadata?.naturalWidth,
-        naturalHeight: node.metadata?.naturalHeight,
-        renderedWidth: node.width,
-        renderedHeight: node.height,
-        scale,
-    });
+    // 只补当前目标档位；低档由后台统一预生成任务负责，ensureImagePreview 自带 key 去重。
+    useEffect(() => {
+        if (!content || isLocalSource) return;
+        if (previewUrlFor(targetKey, previewSource)) return;
+        void ensureImagePreview(targetKey, content, storageKey, previewSource, false, targetLevel).catch(() => undefined);
+    }, [content, isLocalSource, targetKey, targetLevel, previewSource, storageKey]);
+
+    // 从目标档一路回退到 @256；任何档位都未就绪时只画占位色，绝不把 4K 原图塞进画布。
+    const cachedPreview = fallbackKeys.map((key) => previewUrlFor(key, previewSource)).find((url) => Boolean(url)) || "";
+    const imageSource = pickImageSource({ previewUrl: cachedPreview, originalUrl: isLocalSource ? content : "" });
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 {media ?? (
-                    <img
-                        src={imageSource}
-                        alt={node.title}
-                        draggable={false}
-                        decoding="async"
-                        onLoad={(event) => {
-                            const image = event.currentTarget;
-                            if (imageSource === content && image.currentSrc === image.src) onResize?.(node.id, image.naturalWidth, image.naturalHeight, undefined, node);
-                        }}
-                        onDragStart={(event) => event.preventDefault()}
-                        className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
-                    />
+                    imageSource ? (
+                        <img
+                            src={imageSource}
+                            alt={node.title}
+                            draggable={false}
+                            decoding="async"
+                            onLoad={(event) => {
+                                const image = event.currentTarget;
+                                if (imageSource === content && image.currentSrc === image.src) onResize?.(node.id, image.naturalWidth, image.naturalHeight, undefined, node);
+                            }}
+                            onDragStart={(event) => event.preventDefault()}
+                            className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                        />
+                    ) : (
+                        <div className="h-full w-full rounded-3xl" style={{ background: theme.node.fill }} />
+                    )
                 )}
             </div>
             {isBatchRoot ? (

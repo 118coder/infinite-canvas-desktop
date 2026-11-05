@@ -3,7 +3,7 @@
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
-import { createImageThumbnail } from "@/lib/image-thumbnail";
+import { allLodKeys, createImageThumbnail } from "@/lib/image-thumbnail";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/services/anonymous-storage";
 import { apiGet } from "@/services/api/request";
@@ -143,9 +143,21 @@ export function smallImagePreviewKey(key: string) {
     return `${key}@256`;
 }
 
+/**
+ * 这些源不会生成预览档位，调用方必须回退到原内容显示。
+ * blob: 是同页可 fetch 的对象 URL，必须允许生成预览：本地导入的 4K 图也要走 LOD，
+ * 否则 500 张导入图会一直显示 4K 原图，缩放/拖拽仍然卡顿。
+ */
+export function skipsImagePreview(url?: string, storageKey?: string) {
+    const value = url?.trim() || "";
+    const lower = value.toLowerCase();
+    const isInline = lower.startsWith("data:") || lower.startsWith("image:") || (value.length > 256 && /^[a-z\d+/=\s]+$/i.test(value));
+    return isInline || isComfyImageSource(storageKey) || isComfyImageSource(url);
+}
+
 export async function ensureImagePreview(key: string, url?: string, storageKey?: string, source = storageKey || url || "", cachedOnly = false, maxEdge?: number): Promise<string | undefined> {
     if (!key || !source) return undefined;
-    if (isLocalImageSource(url) || isComfyImageSource(storageKey) || isComfyImageSource(url)) {
+    if (skipsImagePreview(url, storageKey)) {
         await deleteImagePreviews([key]);
         return undefined;
     }
@@ -173,7 +185,13 @@ export async function ensureImagePreview(key: string, url?: string, storageKey?:
 }
 
 export async function deleteImagePreviews(keys: Iterable<string>) {
-    const uniqueKeys = Array.from(new Set(keys));
+    // 画布节点是多档 LOD：删除主档时必须连带删除所有档位，否则换图后旧档位会被误用。
+    const expanded = new Set<string>();
+    Array.from(keys).forEach((key) => {
+        expanded.add(key);
+        if (key.startsWith("canvas-node:") && !key.includes("@")) allLodKeys(key).forEach((lodKey) => expanded.add(lodKey));
+    });
+    const uniqueKeys = Array.from(expanded);
     // 记录确实变化过的 key，删除完成后按 key 精确通知，避免只广播一次让部分订阅者漏更新
     const changedKeys: string[] = [];
     uniqueKeys.forEach((key) => {
@@ -219,7 +237,7 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
         if (!isCurrent()) return undefined;
 
         const resolvedUrl = url || (storageKey ? await resolveImageUrl(storageKey, "") : "");
-        if (!resolvedUrl || isLocalImageSource(resolvedUrl) || isComfyImageSource(resolvedUrl) || !isCurrent()) return undefined;
+        if (!resolvedUrl || skipsImagePreview(resolvedUrl, storageKey) || !isCurrent()) return undefined;
 
         const response = await fetch(getProxyUrl(resolvedUrl));
         if (!response.ok || !isCurrent()) return undefined;
@@ -237,12 +255,23 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
     });
 }
 
-// 统一排空预览队列：仅在非手势期间、且并行数未达上限时启动队首任务
+// 预览生成（4K 解码 + 缩放 + WebP 编码）只在空闲时段推进，
+// 500 张图排队时也不会和拖拽/缩放抢主线程；手势期间整体停摆。
+let previewDrainScheduled = false;
 function drainPreviewQueue() {
-    if (canvasGestureActive) return;
-    while (previewActive < IMAGE_PREVIEW_CONCURRENCY && previewQueue.length) {
-        previewQueue.shift()?.();
-    }
+    if (canvasGestureActive || previewDrainScheduled) return;
+    if (!previewQueue.length || previewActive >= IMAGE_PREVIEW_CONCURRENCY) return;
+    previewDrainScheduled = true;
+    const start = () => {
+        previewDrainScheduled = false;
+        if (canvasGestureActive) return;
+        while (previewActive < IMAGE_PREVIEW_CONCURRENCY && previewQueue.length) {
+            previewQueue.shift()?.();
+        }
+        if (previewQueue.length) drainPreviewQueue();
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 400 });
+    else setTimeout(start, 0);
 }
 
 function queueImagePreview<T>(task: () => Promise<T>) {
