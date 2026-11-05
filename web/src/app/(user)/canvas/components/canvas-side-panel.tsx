@@ -223,7 +223,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
             <div className="px-3 pb-2.5">
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索节点" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            <div className="thin-scrollbar overscroll-contain min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {treeRows.length ? (
                     <div className="space-y-1.5">
                         {treeRows.map(({ node, depth, hasChildren }) => {
@@ -231,7 +231,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                             const hasImage = isCanvasImageNodeType(node.type) && node.metadata?.content;
                             const active = selectedNodeIds.has(node.id);
                             return (
-                                <div key={node.id} className={cn("relative flex items-center rounded-lg transition", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
+                                <div key={node.id} className={cn("relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_64px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
                                     {depth ? <span className="pointer-events-none absolute -left-3 top-[calc(-50%-0.4rem)] h-[calc(100%+0.4rem)] w-3 rounded-bl-md border-b border-l opacity-45" style={{ borderColor: theme.node.stroke }} /> : null}
                                     {node.type === CanvasNodeType.Group && hasChildren ? (
                                         <button type="button" onClick={() => setCollapsedGroups((current) => (current.has(node.id) ? new Set([...current].filter((id) => id !== node.id)) : new Set(current).add(node.id)))} className="ml-1 grid size-6 shrink-0 place-items-center opacity-55 transition hover:opacity-100" aria-label={node.title}>
@@ -256,6 +256,9 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                                                         ) || node.metadata?.content
                                                     }
                                                     alt={node.title}
+                                                    loading="lazy"
+                                                    decoding="async"
+                                                    draggable={false}
                                                     className="size-full object-cover"
                                                 />
                                             ) : (
@@ -326,7 +329,7 @@ function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme
                     添加
                 </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            <div className="thin-scrollbar overscroll-contain min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {filtered.length ? <div className="grid grid-cols-2 gap-2 px-1 pt-1">{items.map((asset) => <AssetDragCard key={asset.id} asset={asset} theme={theme} onAssetDragStart={onAssetDragStart} onAssetDragEnd={onAssetDragEnd} />)}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无素材" className="pt-16" />}
                 {filtered.length > ASSET_PAGE_SIZE ? <Pagination className="!mt-3 flex justify-center" size="small" current={page} pageSize={ASSET_PAGE_SIZE} total={filtered.length} showSizeChanger={false} onChange={setPage} /> : null}
             </div>
@@ -349,10 +352,10 @@ function DraggableAssetCard({ theme, title, payload, kind, imageUrl, text, onAss
                 onAssetDragStart(payload);
             }}
             onDragEnd={onAssetDragEnd}
-            className="group relative aspect-square cursor-grab overflow-hidden rounded-xl border transition duration-200 hover:-translate-y-0.5 hover:shadow-lg active:cursor-grabbing"
+            className="group relative aspect-square cursor-grab overflow-hidden rounded-xl border transition duration-200 [content-visibility:auto] [contain-intrinsic-size:auto_220px] hover:-translate-y-0.5 hover:shadow-lg active:cursor-grabbing"
             style={{ borderColor: theme.node.stroke, background: theme.node.panel }}
         >
-            {kind === "text" ? imageUrl ? <div className="flex size-full flex-col"><img src={imageUrl} alt={title} className="h-1/2 w-full object-cover" /><div className="h-1/2 overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{text}</div></div> : <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{text}</div> : kind === "audio" ? <span className="grid size-full place-items-center"><Music2 className="size-8 opacity-45" /></span> : imageUrl ? kind === "video" ? <video src={imageUrl + "#t=0.1"} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <img src={imageUrl} alt={title} className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <span className="grid size-full place-items-center"><FileText className="size-8 opacity-45" /></span>}
+            {kind === "text" ? imageUrl ? <div className="flex size-full flex-col"><img src={imageUrl} alt={title} loading="lazy" decoding="async" draggable={false} className="h-1/2 w-full object-cover" /><div className="h-1/2 overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{text}</div></div> : <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{text}</div> : kind === "audio" ? <span className="grid size-full place-items-center"><Music2 className="size-8 opacity-45" /></span> : imageUrl ? kind === "video" ? <video src={imageUrl + "#t=0.1"} muted playsInline preload="metadata" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <img src={imageUrl} alt={title} loading="lazy" decoding="async" draggable={false} className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" /> : <span className="grid size-full place-items-center"><FileText className="size-8 opacity-45" /></span>}
         </div>
     );
 }
@@ -381,7 +384,7 @@ const CanvasPromptsTab = memo(function CanvasPromptsTab({ theme, onInsert }: { t
             <div className="px-3 pb-2.5 pt-1">
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索提示词" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+            <div className="thin-scrollbar overscroll-contain min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {categoryQuery.isLoading ? <div className="flex justify-center pt-16"><Spin size="small" /></div> : (
                     <div className="space-y-2">
                         {categories.map((category) => {
