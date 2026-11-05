@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import { Empty, Input, Pagination, Select, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { BookOpen, ChevronRight, Clapperboard, Eye, FileText, Group, Image as ImageIcon, Music2, Plus, Search, Settings2, Type, Video } from "lucide-react";
@@ -93,7 +93,7 @@ const STATUS_COLOR: Record<string, string> = {
     error: "#ef4444",
 };
 
-export function CanvasSidePanel({ nodes, selectedNodeIds, open, width, onWidthChange, onFocusNode, onAssetDragStart, onAssetDragEnd, onInsertAsset }: Props) {
+export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNodeIds, open, width, onWidthChange, onFocusNode, onAssetDragStart, onAssetDragEnd, onInsertAsset }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
     const [mounted, setMounted] = useState(open);
@@ -165,7 +165,7 @@ export function CanvasSidePanel({ nodes, selectedNodeIds, open, width, onWidthCh
             </motion.aside>
         </motion.div>
     );
-}
+});
 
 function PanelTabButton({ label, active, theme, onClick }: { label: string; active: boolean; theme: CanvasTheme; onClick: () => void }) {
     return (
@@ -182,12 +182,16 @@ const NODE_ROW_STRIDE = NODE_ROW_HEIGHT + NODE_ROW_GAP;
 const NODE_WINDOW_EXTRA = 8;
 
 function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; theme: CanvasTheme }) {
+    // 节点拖动时 nodes 每帧变化，用延迟值让长列表不逐帧重建；数量显示仍用原始 nodes
+    const deferredNodes = useDeferredValue(nodes);
     const projectId = useCanvasUiStore((state) => state.openProjectId) || "";
     const [keyword, setKeyword] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("all");
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     const rowsScrollRef = useRef<HTMLDivElement | null>(null);
+    // 选中定位防抖 timer：框选拖动会高频刷新选中集，合并为一次即时定位
+    const scrollIntoViewTimerRef = useRef<number | null>(null);
     // ⑤ 等高行窗口化：只挂载滚动窗口附近的行，长列表 DOM 数量恒定
     const [windowRange, setWindowRange] = useState({ start: 0, end: 40 });
     const updateWindow = useCallback((scrollTop: number, clientHeight: number) => {
@@ -226,7 +230,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
 
     // 40px 行缩略图用 256px 小档预览（解码体积比 1536 主档小一个量级），缺了就地生成
     useEffect(() => {
-        nodes.forEach((node) => {
+        deferredNodes.forEach((node) => {
             if (!isCanvasImageNodeType(node.type) || !node.metadata?.content) return;
             const content = node.metadata.content;
             const storageKey = node.metadata.storageKey;
@@ -235,31 +239,31 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
             if (previewUrlFor(key, source)) return;
             void ensureImagePreview(key, content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
         });
-    }, [nodes, projectId]);
+    }, [deferredNodes, projectId]);
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        return nodes.filter((node) => {
+        return deferredNodes.filter((node) => {
             if (typeFilter !== "all" && node.type !== typeFilter) return false;
             return !query || [node.title, NODE_TYPE_LABEL[node.type], node.metadata?.content, node.metadata?.prompt].filter(Boolean).join(" ").toLowerCase().includes(query);
         });
-    }, [keyword, nodes, typeFilter]);
+    }, [keyword, deferredNodes, typeFilter]);
     const treeRows = useMemo(() => {
         const filteredIds = new Set(filtered.map((node) => node.id));
-        const groups = new Set(nodes.filter((node) => node.type === CanvasNodeType.Group).map((node) => node.id));
+        const groups = new Set(deferredNodes.filter((node) => node.type === CanvasNodeType.Group).map((node) => node.id));
         const children = new Map<string, CanvasNodeData[]>();
         filtered.forEach((node) => {
             const groupId = node.metadata?.groupId;
             if (groupId && groups.has(groupId)) children.set(groupId, [...(children.get(groupId) || []), node]);
         });
-        return nodes.flatMap((node) => {
+        return deferredNodes.flatMap((node) => {
             if (node.metadata?.groupId && groups.has(node.metadata.groupId)) return [];
             if (node.type !== CanvasNodeType.Group) return filteredIds.has(node.id) ? [{ node, depth: 0, hasChildren: false }] : [];
             const groupChildren = children.get(node.id) || [];
             if (!filteredIds.has(node.id) && !groupChildren.length) return [];
             return [{ node, depth: 0, hasChildren: groupChildren.length > 0 }, ...(collapsedGroups.has(node.id) ? [] : groupChildren.map((child) => ({ node: child, depth: 1, hasChildren: false })))];
         });
-    }, [collapsedGroups, filtered, nodes]);
+    }, [collapsedGroups, filtered, deferredNodes]);
 
     useEffect(() => {
         const container = rowsScrollRef.current;
@@ -267,23 +271,34 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
         updateWindow(container.scrollTop, container.clientHeight || 720);
     }, [treeRows, updateWindow]);
 
+    // 框选/拖动选中会高频刷新 selectedNodeIds，合并为 150ms 后的一次即时定位，避免逐帧滚动
     useEffect(() => {
-        const selectedId = Array.from(selectedNodeIds)[0];
-        if (!selectedId) return;
-        const container = rowsScrollRef.current;
-        const index = treeRows.findIndex((row) => row.node.id === selectedId);
-        if (index < 0 || !container) {
-            rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-            return;
-        }
-        const top = index * NODE_ROW_STRIDE;
-        if (top < container.scrollTop || top + NODE_ROW_HEIGHT > container.scrollTop + container.clientHeight) {
-            // 目标行未被窗口挂载时直接定位滚动窗口
-            container.scrollTop = Math.max(0, top - container.clientHeight / 2 + NODE_ROW_HEIGHT / 2);
-            updateWindow(container.scrollTop, container.clientHeight);
-        } else {
-            rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
+        if (scrollIntoViewTimerRef.current) window.clearTimeout(scrollIntoViewTimerRef.current);
+        scrollIntoViewTimerRef.current = window.setTimeout(() => {
+            scrollIntoViewTimerRef.current = null;
+            const selectedId = Array.from(selectedNodeIds)[0];
+            if (!selectedId) return;
+            const container = rowsScrollRef.current;
+            const index = treeRows.findIndex((row) => row.node.id === selectedId);
+            if (index < 0 || !container) {
+                rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest" });
+                return;
+            }
+            const top = index * NODE_ROW_STRIDE;
+            if (top < container.scrollTop || top + NODE_ROW_HEIGHT > container.scrollTop + container.clientHeight) {
+                // 目标行未被窗口挂载时直接定位滚动窗口
+                container.scrollTop = Math.max(0, top - container.clientHeight / 2 + NODE_ROW_HEIGHT / 2);
+                updateWindow(container.scrollTop, container.clientHeight);
+            } else {
+                rowRefs.current[selectedId]?.scrollIntoView({ block: "nearest" });
+            }
+        }, 150);
+        return () => {
+            if (scrollIntoViewTimerRef.current) {
+                window.clearTimeout(scrollIntoViewTimerRef.current);
+                scrollIntoViewTimerRef.current = null;
+            }
+        };
     }, [selectedNodeIds, treeRows, updateWindow]);
 
     return (

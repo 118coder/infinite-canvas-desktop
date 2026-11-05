@@ -4,16 +4,17 @@ import { Button, Modal, Tooltip } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useCommittedScale } from "../stores/use-viewport-store";
 
 type CanvasZoomControlsProps = {
-    scale: number;
     onScaleChange: (scale: number) => void;
     onReset: () => void;
     onFitView: () => void;
 };
 
-// memo：回调由调用方保证稳定引用
-export const CanvasZoomControls = memo(function CanvasZoomControls({ scale, onScaleChange, onReset, onFitView }: CanvasZoomControlsProps) {
+// memo：回调由调用方保证稳定引用；缩放值单独订阅，避免视口变化重渲染画布页。
+export const CanvasZoomControls = memo(function CanvasZoomControls({ onScaleChange, onReset, onFitView }: CanvasZoomControlsProps) {
+    const scale = useCommittedScale();
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];

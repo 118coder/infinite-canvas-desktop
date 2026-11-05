@@ -470,3 +470,15 @@
     animation: none;
     mix-blend-mode: normal;
 }
+
+/* 注册为独立继承属性，让 Chromium 走快速路径，避免每帧写入时整棵子树样式失效。 */
+@property --canvas-inverse-scale {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 1;
+}
+
+/* 仅作用于画布容器本身，不使用后代选择器，避免手势起止触发整棵子树样式重算。 */
+.canvas-gesture {
+    cursor: grabbing !important;
+}

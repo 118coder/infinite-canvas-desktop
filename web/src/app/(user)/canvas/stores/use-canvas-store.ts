@@ -50,6 +50,8 @@ const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+// 仅保留最近一次待写入的完整 value，序列化与落盘推迟到空闲时段执行。
+let latestPersistValue: StorageValue<CanvasStore> | null = null;
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
@@ -62,10 +64,23 @@ const canvasStorage: PersistStorage<CanvasStore> = {
             return;
         }
         queuedPersistState = nextState;
+        // 定时器只负责调度，不在此做序列化 / 落盘，避免松手后的主线程抖顿。
+        latestPersistValue = value;
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
             saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
+            const write = () => {
+                if (!latestPersistValue) return;
+                void Promise.resolve(
+                    localForageStorage.setItem(name, JSON.stringify(latestPersistValue)),
+                ).catch(() => undefined);
+            };
+            // 防抖到期后让出主线程，在浏览器空闲时段再序列化并写入。
+            if (typeof requestIdleCallback === "function") {
+                requestIdleCallback(write, { timeout: 1000 });
+            } else {
+                setTimeout(write, 0);
+            }
         }, 400);
     },
     removeItem: (name) => localForageStorage.removeItem(name),

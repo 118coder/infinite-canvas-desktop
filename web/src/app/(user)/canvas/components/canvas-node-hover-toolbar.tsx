@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, Trash2, Upload, Video } from "lucide-react";
 
@@ -8,14 +8,14 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
+import { useCommittedViewport, viewportStore } from "../stores/use-viewport-store";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { isCanvasImageNodeType, isPanoramaNodeType } from "../utils/canvas-panorama";
 import { ImageToolSettingsModal, type ImageToolbarSettingsTool } from "./canvas-image-toolbar-settings-modal";
 import { IMAGE_QUICK_TOOLS_STORAGE_KEY, PANORAMA_QUICK_TOOLS_STORAGE_KEY, buildImageToolbarTools, defaultImageQuickToolIds, defaultPanoramaQuickToolIds, readImageQuickToolsConfig, type ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
-    viewport: ViewportTransform;
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
     onInfo: (node: CanvasNodeData) => void;
@@ -55,7 +55,6 @@ type ToolbarTool = {
 
 export function CanvasNodeHoverToolbar({
     node,
-    viewport,
     onKeep,
     onLeave,
     onInfo,
@@ -91,6 +90,8 @@ export function CanvasNodeHoverToolbar({
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
     const { message } = App.useApp();
     const copyText = useCopyText();
+    const viewport = useCommittedViewport();
+    const toolbarRef = useRef<HTMLDivElement>(null);
     const isPanorama = isPanoramaNodeType(node?.type);
     const quickToolsStorageKey = isPanorama ? PANORAMA_QUICK_TOOLS_STORAGE_KEY : IMAGE_QUICK_TOOLS_STORAGE_KEY;
     const { ids: quickImageToolIds, showLabels: showImageToolLabels } = quickToolsConfigs[quickToolsStorageKey];
@@ -121,6 +122,17 @@ export function CanvasNodeHoverToolbar({
     useEffect(() => {
         setImageToolSettingsOpen(false);
     }, [node?.id]);
+
+    // 手势期间视口只走 live 通道：直接改工具栏位置，不触发 React 重渲染。
+    useEffect(() => {
+        if (!node) return;
+        const element = toolbarRef.current;
+        if (!element) return;
+        return viewportStore.subscribeLive((next) => {
+            element.style.left = `${next.x + (node.position.x + node.width / 2) * next.k}px`;
+            element.style.top = `${next.y + node.position.y * next.k - 14}px`;
+        });
+    }, [node]);
 
     if (!node) return null;
 
@@ -223,6 +235,7 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
+                ref={toolbarRef}
                 className="absolute z-[70] flex flex-wrap -translate-x-1/2 -translate-y-full items-center justify-center gap-x-2 overflow-visible rounded-xl border border-white/10 bg-[#242424] px-2 text-[13px] text-[#f3f3f3] shadow-[0_8px_28px_rgba(0,0,0,.28)]"
                 style={{ left, top, maxWidth: "min(800px, calc(100vw - 32px))" }}
                 onMouseEnter={() => onKeep(node.id)}

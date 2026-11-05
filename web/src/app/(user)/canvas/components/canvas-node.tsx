@@ -8,7 +8,7 @@ import { ChevronRight, Image as ImageIcon, Maximize2, Music2, Pause, Play, Refre
 import { canvasThemes } from "@/lib/canvas-theme";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewVersion, previewUrlFor, resolveImageUrl, subscribeImagePreview } from "@/services/image-storage";
 import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -764,7 +764,7 @@ function VideoNodeContent({ node, theme, isSelected, onViewImage, onResize }: No
             </div>
         );
     const controlStyle = { background: theme.toolbar.panel, color: theme.toolbar.item };
-    const controlClassName = "absolute bottom-2 z-20 flex size-7 items-center justify-center rounded-md opacity-70 backdrop-blur transition-opacity hover:opacity-100";
+    const controlClassName = "absolute bottom-2 z-20 flex size-7 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100";
     const keepVideoFocus = (event: React.MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
@@ -773,7 +773,7 @@ function VideoNodeContent({ node, theme, isSelected, onViewImage, onResize }: No
     return (
         <div className="relative h-full w-full overflow-hidden rounded-[18px] bg-black">
             <video ref={videoRef} src={node.metadata.content} tabIndex={-1} playsInline className="h-full w-full object-contain outline-none" onLoadStart={() => { setVideoTime(0); setMediaDurationMs(0); }} onLoadedMetadata={(event) => { const video = event.currentTarget; setMediaDurationMs(Number.isFinite(video.duration) ? video.duration * 1000 : 0); if (video.currentSrc === video.src) onResize(node.id, video.videoWidth, video.videoHeight, undefined, node); }} onTimeUpdate={(event) => setVideoTime(event.currentTarget.currentTime)} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onKeyDown={(event) => { if (isSelected && event.code === "Space") { event.preventDefault(); event.stopPropagation(); togglePlayback(); } }} />
-            {mediaDurationMs > 0 ? <span className="pointer-events-none absolute left-2 top-2 z-20 flex h-7 items-center justify-center rounded-md px-2 text-[11px] font-medium opacity-70 backdrop-blur" style={controlStyle}>{new Date(mediaDurationMs).toISOString().slice(mediaDurationMs >= 3_600_000 ? 11 : 14, 19)}</span> : null}
+            {mediaDurationMs > 0 ? <span className="pointer-events-none absolute left-2 top-2 z-20 flex h-7 items-center justify-center rounded-md px-2 text-[11px] font-medium opacity-70" style={controlStyle}>{new Date(mediaDurationMs).toISOString().slice(mediaDurationMs >= 3_600_000 ? 11 : 14, 19)}</span> : null}
             <button type="button" title={isPlaying ? "暂停" : "播放"} aria-label={isPlaying ? "暂停" : "播放"} className={`${controlClassName} left-2`} style={controlStyle} onClick={(event) => { event.stopPropagation(); togglePlayback(); }} onMouseDown={keepVideoFocus} onDoubleClick={(event) => event.stopPropagation()}>
                 {isPlaying ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
             </button>
@@ -950,11 +950,29 @@ function ImageContent({
     const previewSource = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
     const hasNaturalSize = Boolean(node.metadata?.naturalWidth && node.metadata?.naturalHeight);
 
-    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
-
     // 渲染尺寸较小时（缩小画布查看整图）优先用 768 中档预览：解码内存比 1536 主档再降 4 倍
     const requiredLongEdge = Math.max(node.width, node.height) * scale * (globalThis.devicePixelRatio || 1);
     const midPreviewKey = requiredLongEdge <= 768 && hasNaturalSize ? `${previewKey}@768` : "";
+
+    // 按 previewKey 与 midPreviewKey 精确订阅：只有这两个 key 的预览生成/失效时该节点才重渲染，
+    // 不再订阅全局 revision，避免平移/缩放时把画布上所有图片节点一起拖下水
+    const subscribePreview = useCallback(
+        (onStoreChange: () => void) => {
+            const unsubscribeMain = subscribeImagePreview(previewKey, onStoreChange);
+            const unsubscribeMid = subscribeImagePreview(midPreviewKey, onStoreChange);
+            return () => {
+                unsubscribeMain();
+                unsubscribeMid();
+            };
+        },
+        [previewKey, midPreviewKey],
+    );
+    // 两个 key 的版本号相加作为快照：任一预览变化都会让和递增，从而触发本节点刷新
+    const getPreviewSnapshot = useCallback(
+        () => getImagePreviewVersion(previewKey) + getImagePreviewVersion(midPreviewKey),
+        [previewKey, midPreviewKey],
+    );
+    useSyncExternalStore(subscribePreview, getPreviewSnapshot, getPreviewSnapshot);
     useEffect(() => {
         if (!midPreviewKey || !content) return;
         void ensureImagePreview(midPreviewKey, content, storageKey, previewSource, false, 768).catch(() => undefined);
@@ -991,7 +1009,7 @@ function ImageContent({
             {isBatchRoot ? (
                 <button
                     type="button"
-                    className="absolute right-2.5 top-2.5 z-30 flex h-8 items-center justify-center gap-1 rounded-full border px-2.5 text-xs font-semibold shadow-[0_6px_18px_rgba(15,23,42,.10)] backdrop-blur-md transition hover:scale-[1.02]"
+                    className="absolute right-2.5 top-2.5 z-30 flex h-8 items-center justify-center gap-1 rounded-full border px-2.5 text-xs font-semibold shadow-[0_6px_18px_rgba(15,23,42,.10)] transition hover:scale-[1.02]"
                     style={{ background: `${theme.toolbar.panel}d9`, borderColor: `${theme.toolbar.border}cc`, color: theme.node.text }}
                     aria-label={batchExpanded ? "图片组已展开" : "图片组已收起"}
                     onClick={(event) => {
@@ -1008,7 +1026,7 @@ function ImageContent({
             {isBatchChild ? (
                 <button
                     type="button"
-                    className="absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition group-hover/batch:opacity-100 hover:scale-[1.02]"
+                    className="absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] transition group-hover/batch:opacity-100 hover:scale-[1.02]"
                     style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                     onClick={(event) => {
                         event.stopPropagation();
@@ -1031,7 +1049,7 @@ function ImageInfoBar({ node }: { node: CanvasNodeData }) {
     const size = formatBytes(node.metadata?.bytes || 0);
     return (
         <div className="pointer-events-none absolute bottom-3 right-3 z-40 max-w-[calc(100%-24px)]">
-            <span className="max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
+            <span className="max-w-full truncate rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white">
                 {width} x {height}
                 {size ? ` · ${size}` : ""}
             </span>

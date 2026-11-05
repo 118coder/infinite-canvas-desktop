@@ -64,7 +64,10 @@ const previewSources = new Map<string, string>();
 const previewRequests = new Map<string, { source: string; promise: Promise<string | undefined> }>();
 const previewDeletes = new Map<string, Promise<void>>();
 const previewEpochs = new Map<string, number>();
-const previewListeners = new Set<() => void>();
+// 按 key 精确订阅：每个预览 key 独立维护版本号与监听集合，避免全局广播让所有图片节点一起重渲染
+const previewKeyVersions = new Map<string, number>();
+const previewKeyListeners = new Map<string, Set<() => void>>();
+const previewListeners = new Set<(key: string) => void>();
 const serverUrls = new Map<string, string>();
 const previewQueue: Array<() => void> = [];
 // 预览图长边上限调整（768 → 1536）后升版本，让旧缩略图重新生成为更清晰的一档
@@ -72,6 +75,8 @@ const IMAGE_PREVIEW_VERSION = 2;
 const IMAGE_PREVIEW_CONCURRENCY = 2;
 let previewRevision = 0;
 let previewActive = 0;
+// 画布手势（平移/缩放/拖拽）期间暂停启动新的预览生成任务，手势结束后再统一排空队列
+let canvasGestureActive = false;
 export const USER_STORAGE_PROVIDER_KEY = "infinite-canvas:user_storage_provider";
 export const USER_WEBDAV_STORAGE_PROVIDER_KEY = "infinite-canvas:user_webdav_storage_provider";
 let storageConfigPromise: Promise<StorageConfig> | null = null;
@@ -90,15 +95,45 @@ export function previewUrlFor(key: string, source?: string) {
     return cached && (!source || cached.source === source) ? cached.url : undefined;
 }
 
-export function subscribeImagePreviews(listener: () => void) {
+export function subscribeImagePreviews(listener: (key: string) => void) {
     previewListeners.add(listener);
     return () => {
         previewListeners.delete(listener);
     };
 }
 
+// 按 key 精确订阅：只有对应 key 的预览生成/失效时才通知该节点的订阅者
+export function subscribeImagePreview(key: string, listener: () => void): () => void {
+    let listeners = previewKeyListeners.get(key);
+    if (!listeners) {
+        listeners = new Set<() => void>();
+        previewKeyListeners.set(key, listeners);
+    }
+    const bucket = listeners;
+    bucket.add(listener);
+    return () => {
+        bucket.delete(listener);
+        if (!bucket.size && previewKeyListeners.get(key) === bucket) previewKeyListeners.delete(key);
+    };
+}
+
+// 返回某个 key 的预览版本号，供 useSyncExternalStore 作为快照；未产生过变化时为 0
+export function getImagePreviewVersion(key: string): number {
+    return previewKeyVersions.get(key) || 0;
+}
+
 export function getImagePreviewRevision() {
     return previewRevision;
+}
+
+// 手势门控：由画布在手势开始/结束时驱动，暂停或恢复预览生成任务
+export function setCanvasGestureActive(active: boolean) {
+    canvasGestureActive = active;
+    if (!active) drainPreviewQueue();
+}
+
+export function isCanvasGestureActive() {
+    return canvasGestureActive;
 }
 
 // 小档预览：左栏 40px 行缩略图等小图场景专用，key 加后缀与主档（1536）分开存取
@@ -139,12 +174,13 @@ export async function ensureImagePreview(key: string, url?: string, storageKey?:
 
 export async function deleteImagePreviews(keys: Iterable<string>) {
     const uniqueKeys = Array.from(new Set(keys));
-    let changed = false;
+    // 记录确实变化过的 key，删除完成后按 key 精确通知，避免只广播一次让部分订阅者漏更新
+    const changedKeys: string[] = [];
     uniqueKeys.forEach((key) => {
         previewEpochs.set(key, (previewEpochs.get(key) || 0) + 1);
         previewRequests.delete(key);
         previewSources.delete(key);
-        changed = removeCachedPreview(key, false) || changed;
+        if (removeCachedPreview(key, false)) changedKeys.push(key);
     });
     await Promise.all(
         uniqueKeys.map((key) => {
@@ -157,7 +193,7 @@ export async function deleteImagePreviews(keys: Iterable<string>) {
             });
         }),
     );
-    if (changed) notifyPreviewChange();
+    changedKeys.forEach((key) => notifyPreviewChange(key));
 }
 
 export async function deleteUnusedImagePreviews(prefix: string, usedKeys: ReadonlySet<string>) {
@@ -201,6 +237,14 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
     });
 }
 
+// 统一排空预览队列：仅在非手势期间、且并行数未达上限时启动队首任务
+function drainPreviewQueue() {
+    if (canvasGestureActive) return;
+    while (previewActive < IMAGE_PREVIEW_CONCURRENCY && previewQueue.length) {
+        previewQueue.shift()?.();
+    }
+}
+
 function queueImagePreview<T>(task: () => Promise<T>) {
     return new Promise<T>((resolve, reject) => {
         const run = () => {
@@ -209,11 +253,12 @@ function queueImagePreview<T>(task: () => Promise<T>) {
                 .then(resolve, reject)
                 .finally(() => {
                     previewActive -= 1;
-                    previewQueue.shift()?.();
+                    drainPreviewQueue();
                 });
         };
-        if (previewActive < IMAGE_PREVIEW_CONCURRENCY) run();
-        else previewQueue.push(run);
+        // 任务一律先入队，由 drainPreviewQueue 依据手势状态与并行上限决定是否启动
+        previewQueue.push(run);
+        drainPreviewQueue();
     });
 }
 
@@ -243,7 +288,7 @@ function cacheImagePreview(key: string, source: string, blob: Blob) {
     if (cached) URL.revokeObjectURL(cached.url);
     const url = URL.createObjectURL(blob);
     previewUrls.set(key, { source, url });
-    notifyPreviewChange();
+    notifyPreviewChange(key);
     return url;
 }
 
@@ -252,13 +297,15 @@ function removeCachedPreview(key: string, notify = true) {
     if (!cached) return false;
     URL.revokeObjectURL(cached.url);
     previewUrls.delete(key);
-    if (notify) notifyPreviewChange();
+    if (notify) notifyPreviewChange(key);
     return true;
 }
 
-function notifyPreviewChange() {
+function notifyPreviewChange(key: string) {
     previewRevision += 1;
-    previewListeners.forEach((listener) => listener());
+    previewKeyVersions.set(key, (previewKeyVersions.get(key) || 0) + 1);
+    previewKeyListeners.get(key)?.forEach((listener) => listener());
+    previewListeners.forEach((listener) => listener(key));
 }
 
 export async function autoSyncToCloud<T extends { storageKey: string }>(source: string | Blob, upload: () => Promise<T | null>): Promise<T | null> {

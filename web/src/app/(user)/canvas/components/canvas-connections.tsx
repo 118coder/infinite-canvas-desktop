@@ -50,13 +50,24 @@ export const ConnectionPath = memo(
                     onContextMenu?.(event);
                 }}
             />
+            {/* 高亮时用一条更粗的半透明 path 模拟光晕，避免 drop-shadow 每帧重新光栅化。 */}
+            {active && (
+                <path
+                    d={pathD}
+                    stroke={theme.node.activeStroke}
+                    strokeWidth={7}
+                    strokeOpacity={0.22}
+                    fill="none"
+                    pointerEvents="none"
+                />
+            )}
             <path
                 d={pathD}
                 stroke={active ? theme.node.activeStroke : theme.node.muted}
                 strokeWidth={active ? 3 : 2}
                 strokeOpacity={active ? 1 : 0.82}
                 fill="none"
-                style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
+                style={{ pointerEvents: "none" }}
             />
         </g>
     );
