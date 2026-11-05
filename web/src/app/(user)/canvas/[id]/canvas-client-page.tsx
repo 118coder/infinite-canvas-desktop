@@ -2,9 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
-import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Download, Globe2, Home, ImageIcon, Images, Keyboard, Layers3, List, Maximize, Menu, Bot, Music2, PanelLeftClose, PanelLeftOpen, Pause, Play, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video, Volume2, VolumeX, X } from "lucide-react";
+import { Globe2, Home, ImageIcon, Images, Keyboard, Layers3, List, Menu, Bot, Music2, PanelLeftClose, PanelLeftOpen, Pause, Play, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { stopCanvasTask } from "@/services/api/canvas-tasks";
@@ -71,8 +70,12 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal } from "../components/asset-picker-modal";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CANVAS_ASSET_DRAG_TYPE, CanvasSidePanel } from "../components/canvas-side-panel";
+import { FullscreenPreview } from "../components/canvas-fullscreen-preview";
 import { DEFAULT_CANVAS_AGENT_PANEL, DEFAULT_CANVAS_SIDE_PANEL, useCanvasStore } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
+import { hydrateCanvasImagesSafe, imageMetadata } from "../utils/canvas-media-restore";
+import { consumePendingCanvasInsert, rememberCanvasId } from "@/lib/canvas-handoff";
+import { recordRecentAssetId } from "@/hooks/use-asset-filters";
 import { assistantReferenceContentFromNode, buildNodeMentionReferences, isCanvasReferenceNode } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
 import type { CanvasAgentAction, CanvasAgentToolResult } from "../agent/canvas-agent-tools";
@@ -100,8 +103,6 @@ import {
 } from "../types";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
-
-const CanvasPanoramaViewer = dynamic(() => import("../components/canvas-panorama-viewer"), { ssr: false, loading: () => null });
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -140,22 +141,12 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 const AGENT_PRIMARY_SCRIPT_NODE_SIZE = { width: 550, height: 600 };
-const VIDEO_PREVIEW_CONTROL_CLASS = "flex size-9 items-center justify-center rounded-lg text-white transition-colors hover:bg-white/10";
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
 1. 只输出提示词正文，不要解释。
 2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。
 3. 尽量写成可直接用于生图模型的完整提示词。`;
-
-function formatPreviewTime(value: number) {
-    if (!Number.isFinite(value)) return "0:00";
-    const seconds = Math.floor(value);
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const rest = String(seconds % 60).padStart(2, "0");
-    return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${rest}` : `${minutes}:${rest}`;
-}
 
 // 副本/粘贴不继承生成中的中间状态：清空任务跟踪字段，状态按已有内容归位
 function stripGenerationRuntimeState(metadata: CanvasNodeMetadata): CanvasNodeMetadata {
@@ -414,7 +405,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
-    const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
+    const gridSpacing = useCanvasUiStore((state) => state.gridSpacing);
+    const setGridSpacing = useCanvasUiStore((state) => state.setGridSpacing);
+    const minimapOpen = useCanvasUiStore((state) => state.minimapOpen);
+    const setMinimapOpen = useCanvasUiStore((state) => state.setMinimapOpen);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [sidePanel, setSidePanel] = useState(() => DEFAULT_CANVAS_SIDE_PANEL);
@@ -729,6 +723,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
+            rememberCanvasId(projectId);
             setProjectLoaded(true);
         };
         void restore().catch((error) => {
@@ -749,6 +744,33 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         window.addEventListener("hashchange", openFromLink);
         return () => window.removeEventListener("hashchange", openFromLink);
     }, [projectLoaded, projectId]);
+
+    // “我的素材”页排队插入的素材：打开对应画布后按 48px 阶梯铺开
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const payloads = consumePendingCanvasInsert(projectId);
+        if (!payloads?.length) return;
+        const rect = containerRef.current?.getBoundingClientRect();
+        const current = viewportRef.current;
+        if (!rect || !current) return;
+        const baseX = (rect.width / 2 - current.x) / current.k;
+        const baseY = (rect.height / 2 - current.y) / current.k;
+        payloads.forEach((payload, index) => {
+            void insertAssetAtRef.current(payload, { x: baseX + index * 48, y: baseY + index * 48 });
+        });
+        message.success(payloads.length === 1 ? "已从“我的素材”插入 1 个素材" : `已从“我的素材”插入 ${payloads.length} 个素材`);
+    }, [message, projectLoaded, projectId, size.height, size.width]);
+
+    // 节点内“选择文件补齐”完成后同步当前画布的节点 content，避免本地状态与落盘数据打架
+    useEffect(() => {
+        const onMediaRepaired = (event: Event) => {
+            const detail = (event as CustomEvent<{ storageKey?: string; url?: string }>).detail;
+            if (!detail?.storageKey) return;
+            setNodes((prev) => prev.map((node) => (node.metadata?.storageKey === detail.storageKey ? { ...node, metadata: { ...node.metadata, content: detail.url || node.metadata?.content } } : node)));
+        };
+        window.addEventListener("infinite-canvas:media-repaired", onMediaRepaired);
+        return () => window.removeEventListener("infinite-canvas:media-repaired", onMediaRepaired);
+    }, []);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
@@ -2691,12 +2713,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         [message],
     );
 
-    const uploadNodeMediaToCloud = useCallback(async (node: CanvasNodeData) => {
-        if ((node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content || node.metadata.storageKey?.startsWith("server:") || uploadingMediaNodeIdsRef.current.has(node.id)) return;
+    const uploadNodeMediaToCloud = useCallback(async (node: CanvasNodeData, silent = false) => {
+        if ((node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content || node.metadata.storageKey?.startsWith("server:") || uploadingMediaNodeIdsRef.current.has(node.id)) return false;
         uploadingMediaNodeIdsRef.current.add(node.id);
         const isAudio = node.type === CanvasNodeType.Audio;
         const mediaName = isAudio ? "音频" : "视频";
-        const hideLoading = message.loading(`正在上传${mediaName}至云存储...`, 0);
+        const hideLoading = silent ? () => {} : message.loading(`正在上传${mediaName}至云存储...`, 0);
         try {
             const mediaUrl = await resolveMediaUrl(node.metadata.storageKey, node.metadata.content);
             const filename = `canvas-${node.type}-${node.id}.${isAudio ? audioExtension(node.metadata.mimeType) : "mp4"}`;
@@ -2713,24 +2735,28 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     naturalHeight: uploaded.height || item.metadata?.naturalHeight,
                 },
             } : item)) : nodes);
-            message.success(`${mediaName}已上传至云存储`);
+            if (!silent) message.success(`${mediaName}已上传至云存储`);
+            return true;
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "";
-            if (errorMessage.includes("服务端对象存储未启用") || errorMessage.includes("用户对象存储配置不完整")) {
-                message.error("未添加云存储");
-            } else {
-                message.error(errorMessage || `${mediaName}上传失败`);
+            if (!silent) {
+                const errorMessage = error instanceof Error ? error.message : "";
+                if (errorMessage.includes("服务端对象存储未启用") || errorMessage.includes("用户对象存储配置不完整")) {
+                    message.error("未添加云存储");
+                } else {
+                    message.error(errorMessage || `${mediaName}上传失败`);
+                }
             }
+            return false;
         } finally {
             hideLoading();
             uploadingMediaNodeIdsRef.current.delete(node.id);
         }
     }, [message]);
 
-    const uploadNodeImageToCloud = useCallback(async (node: CanvasNodeData) => {
-        if (!isCanvasImageNodeType(node.type) || !node.metadata?.content || node.metadata.storageKey?.startsWith("server:") || uploadingImageNodeIdsRef.current.has(node.id)) return;
+    const uploadNodeImageToCloud = useCallback(async (node: CanvasNodeData, silent = false) => {
+        if (!isCanvasImageNodeType(node.type) || !node.metadata?.content || node.metadata.storageKey?.startsWith("server:") || uploadingImageNodeIdsRef.current.has(node.id)) return false;
         uploadingImageNodeIdsRef.current.add(node.id);
-        const hideLoading = message.loading("正在上传图片至云存储...", 0);
+        const hideLoading = silent ? () => {} : message.loading("正在上传图片至云存储...", 0);
         try {
             const imageUrl = await resolveImageUrl(node.metadata.storageKey, node.metadata.content);
             const uploaded = await uploadRemoteImageToServer(imageUrl, "canvas-image-" + node.id + ".png");
@@ -2755,14 +2781,18 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     mimeType: uploaded.mimeType,
                 },
             }], false, node));
-            message.success("图片已上传至云存储");
+            if (!silent) message.success("图片已上传至云存储");
+            return true;
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "";
-            if (errorMessage.includes("服务端对象存储未启用") || errorMessage.includes("用户对象存储配置不完整")) {
-                message.error("未添加云存储");
-            } else {
-                message.error(errorMessage || "图片上传失败");
+            if (!silent) {
+                const errorMessage = error instanceof Error ? error.message : "";
+                if (errorMessage.includes("服务端对象存储未启用") || errorMessage.includes("用户对象存储配置不完整")) {
+                    message.error("未添加云存储");
+                } else {
+                    message.error(errorMessage || "图片上传失败");
+                }
             }
+            return false;
         } finally {
             hideLoading();
             uploadingImageNodeIdsRef.current.delete(node.id);
@@ -2770,21 +2800,30 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     }, [message]);
 
     const saveNodeAsset = useCallback(
-        async (node: CanvasNodeData) => {
+        async (node: CanvasNodeData, silent = false) => {
             if (node.type === CanvasNodeType.Text) {
                 const content = node.metadata?.content?.trim();
-                if (!content) return message.error("没有可保存的文本");
+                if (!content) {
+                    if (!silent) message.error("没有可保存的文本");
+                    return false;
+                }
                 addAsset({ kind: "text", title: node.metadata?.prompt?.slice(0, 24) || "画布文本", coverUrl: "", tags: [], source: "Canvas", data: { content }, metadata: { source: "canvas", nodeId: node.id } });
-                message.success("已加入我的素材");
-                return;
+                if (!silent) message.success("已加入我的素材");
+                return true;
             }
             if (node.type === CanvasNodeType.Video) {
-                if (!node.metadata?.content) return message.error("没有可保存的视频");
+                if (!node.metadata?.content) {
+                    if (!silent) message.error("没有可保存的视频");
+                    return false;
+                }
                 addAsset({ kind: "video", title: node.metadata?.prompt?.slice(0, 24) || "画布视频", coverUrl: "", tags: [], source: "Canvas", data: { url: node.metadata.content, storageKey: node.metadata.storageKey, width: node.width, height: node.height, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "video/mp4" }, metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt } });
-                message.success("已加入我的素材");
-                return;
+                if (!silent) message.success("已加入我的素材");
+                return true;
             }
-            if (!node.metadata?.content) return message.error("没有可保存的图片");
+            if (!node.metadata?.content) {
+                if (!silent) message.error("没有可保存的图片");
+                return false;
+            }
             try {
                 const stored = !node.metadata.storageKey && node.metadata.content.startsWith("blob:") ? await uploadImage(node.metadata.content, { localOnly: true }) : null;
                 const imageUrl = stored?.url || node.metadata.content;
@@ -2806,13 +2845,45 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     },
                     metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
                 });
-                message.success("已加入我的素材");
+                if (!silent) message.success("已加入我的素材");
+                return true;
             } catch (error) {
-                message.error(error instanceof Error ? `图片加入素材失败：${error.message}` : "图片加入素材失败");
+                if (!silent) message.error(error instanceof Error ? `图片加入素材失败：${error.message}` : "图片加入素材失败");
+                return false;
             }
         },
         [addAsset, message],
     );
+
+    const saveSelectedAssets = useCallback(async () => {
+        const targets = nodes.filter((node) => selectedNodeIds.has(node.id) && node.metadata?.content && (node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Video || isCanvasImageNodeType(node.type)));
+        if (!targets.length) return message.warning("选中节点没有可保存的内容");
+        const results = await Promise.all(targets.map((node) => saveNodeAsset(node, true)));
+        const saved = results.filter(Boolean).length;
+        if (saved) message.success(saved === 1 ? "已加入我的素材" : `已将 ${saved} 个节点加入我的素材`);
+        if (saved < targets.length) message.warning(`${targets.length - saved} 个节点保存失败`);
+    }, [message, nodes, saveNodeAsset, selectedNodeIds]);
+
+    const downloadSelectedNodes = useCallback(() => {
+        const targets = nodes.filter((node) => selectedNodeIds.has(node.id) && node.metadata?.content && (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio));
+        if (!targets.length) return message.warning("选中节点没有可下载的媒体");
+        targets.forEach((node) => downloadNodeImage(node));
+        message.success(`已开始下载 ${targets.length} 个文件`);
+    }, [downloadNodeImage, message, nodes, selectedNodeIds]);
+
+    const uploadSelectedNodesToCloud = useCallback(async () => {
+        const targets = nodes.filter((node) => selectedNodeIds.has(node.id) && node.metadata?.content && !node.metadata.storageKey?.startsWith("server:") && (isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio));
+        if (!targets.length) return message.warning("选中节点没有可上传的媒体");
+        const hideLoading = message.loading(`正在上传 ${targets.length} 个媒体至云存储...`, 0);
+        let uploaded = 0;
+        for (const node of targets) {
+            const ok = isCanvasImageNodeType(node.type) ? await uploadNodeImageToCloud(node, true) : await uploadNodeMediaToCloud(node, true);
+            if (ok) uploaded += 1;
+        }
+        hideLoading();
+        if (uploaded) message.success(`已上传 ${uploaded} 个媒体至云存储`);
+        if (uploaded < targets.length) message.warning(`${targets.length - uploaded} 个媒体上传失败或未配置云存储`);
+    }, [message, nodes, selectedNodeIds, uploadNodeImageToCloud, uploadNodeMediaToCloud]);
 
     const createImageReversePromptNodes = useCallback(
         (node: CanvasNodeData) => {
@@ -4616,10 +4687,21 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const position = assetInsertPositionRef.current || undefined;
             assetInsertPositionRef.current = null;
             void insertAssetAtRef.current(payload, position);
+            if (payload.assetId) recordRecentAssetId(payload.assetId);
             setAssetPickerOpen(false);
         },
         [],
     );
+
+    const handleAssetInsertMany = useCallback((payloads: InsertAssetPayload[]) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        const center = screenToCanvas((rect?.left || 0) + size.width / 2, (rect?.top || 0) + size.height / 2);
+        payloads.forEach((payload, index) => {
+            void insertAssetAtRef.current(payload, { x: center.x + index * 48, y: center.y + index * 48 });
+            if (payload.assetId) recordRecentAssetId(payload.assetId);
+        });
+        setAssetPickerOpen(false);
+    }, [screenToCanvas, size.height, size.width]);
 
     const focusNode = useCallback(
         (nodeId: string) => {
@@ -4718,6 +4800,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     viewport={viewport}
                     tool={canvasTool}
                     backgroundMode={backgroundMode}
+                    gridSize={gridSpacing}
                     alignmentGuides={alignmentGuides}
                     onViewportChange={(next) => {
                         setViewport(next);
@@ -4981,6 +5064,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
+                    minimapOpen={minimapOpen}
+                    gridSpacing={gridSpacing}
+                    sidebarWidth={sidePanel.open ? sidePanel.width : 0}
                     onAddImage={handleToolbarAddImage}
                     onAddVideo={() => createNode(CanvasNodeType.Video)}
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
@@ -5000,11 +5086,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     onOpenMyAssets={() => {
                         setAssetPickerOpen(true);
                     }}
+                    onToggleMinimap={() => setMinimapOpen(!minimapOpen)}
+                    onGridSpacingChange={setGridSpacing}
+                    onBatchSaveAssets={() => void saveSelectedAssets()}
+                    onBatchDownload={downloadSelectedNodes}
+                    onBatchUploadCloud={() => void uploadSelectedNodesToCloud()}
                 />
 
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
+                {minimapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
-                <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} onFitView={fitView} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
+                <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} onFitView={fitView} />
 
                 {contextMenu ? (
                     <CanvasContextMenu
@@ -5273,7 +5364,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
                 </Modal>
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => { assetInsertPositionRef.current = null; setAssetPickerOpen(false); }} />
+                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onInsertMany={handleAssetInsertMany} onClose={() => { assetInsertPositionRef.current = null; setAssetPickerOpen(false); }} />
             </section>
             {assistantMounted ? (
                 <CanvasAssistantPanel
@@ -5306,198 +5397,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 />
             ) : null}
         </main>
-    );
-}
-
-function FullscreenPreview({ src, alt, isVideo, isPanorama, proxyGeneratedPanorama = false, onDownload, onClose, hasPrev, hasNext, onPrev, onNext }: { src: string; alt: string; isVideo?: boolean; isPanorama?: boolean; proxyGeneratedPanorama?: boolean; onDownload: () => void; onClose: () => void; hasPrev?: boolean; hasNext?: boolean; onPrev?: () => void; onNext?: () => void }) {
-    const [zoom, setZoom] = useState<number>(1);
-    const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-    const [isDragging, setIsDragging] = useState<boolean>(false);
-    const [videoDuration, setVideoDuration] = useState(0);
-    const [videoTime, setVideoTime] = useState(0);
-    const [isVideoPlaying, setIsVideoPlaying] = useState(false);
-    const [videoVolume, setVideoVolume] = useState(1);
-    const dragStartRef = useRef<{ x: number; y: number; panX: number; panY: number }>({ x: 0, y: 0, panX: 0, panY: 0 });
-    const imgRef = useRef<HTMLImageElement>(null);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const videoPlayerRef = useRef<HTMLDivElement>(null);
-
-    const toggleVideoPlayback = () => {
-        const video = videoRef.current;
-        if (!video) return;
-        if (video.paused) void video.play();
-        else video.pause();
-    };
-
-    useEffect(() => {
-        if (!isVideo) return;
-        const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        videoRef.current?.focus({ preventScroll: true });
-        return () => previousFocus?.focus({ preventScroll: true });
-    }, [isVideo]);
-
-    useEffect(() => {
-        const el = imgRef.current;
-        if (!el) return;
-        el.addEventListener("wheel", handleWheel, { passive: false });
-        return () => el.removeEventListener("wheel", handleWheel);
-    });
-
-    const handleWheel = (e: WheelEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        setZoom((z) => {
-            const next = Math.max(0.2, Math.min(8, z - e.deltaY * 0.001));
-            if (next <= 1) setPanOffset({ x: 0, y: 0 });
-            return next;
-        });
-    };
-
-    const handlePointerDown = (e: ReactPointerEvent) => {
-        e.stopPropagation();
-        e.preventDefault();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setIsDragging(true);
-        dragStartRef.current = { x: e.clientX, y: e.clientY, panX: panOffset.x, panY: panOffset.y };
-    };
-
-    const handlePointerMove = (e: ReactPointerEvent) => {
-        if (!isDragging) return;
-        e.preventDefault();
-        setPanOffset({
-            x: dragStartRef.current.panX + (e.clientX - dragStartRef.current.x),
-            y: dragStartRef.current.panY + (e.clientY - dragStartRef.current.y),
-        });
-    };
-
-    const handlePointerUp = (e: ReactPointerEvent) => {
-        setIsDragging(false);
-        e.currentTarget.releasePointerCapture(e.pointerId);
-    };
-
-    return (
-        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/80 backdrop-blur-sm" data-canvas-no-zoom={isPanorama ? "" : undefined} onClick={onClose}>
-            {hasPrev || hasNext ? (
-                <>
-                    <button
-                        type="button"
-                        disabled={!hasPrev}
-                        onClick={(e) => { e.stopPropagation(); onPrev?.(); }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        className="absolute left-4 top-1/2 z-[2010] -translate-y-1/2 flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition-all hover:bg-white/10 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed"
-                    >
-                        <ChevronLeft className="size-6" />
-                    </button>
-                    <button
-                        type="button"
-                        disabled={!hasNext}
-                        onClick={(e) => { e.stopPropagation(); onNext?.(); }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        className="absolute right-4 top-1/2 z-[2010] -translate-y-1/2 flex size-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition-all hover:bg-white/10 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:cursor-not-allowed"
-                    >
-                        <ChevronRight className="size-6" />
-                    </button>
-                </>
-            ) : null}
-            {isPanorama ? (
-                <div className="h-[85vh] w-[85vw] supports-[height:round(1px,1px)]:h-[round(85vh,1px)] supports-[height:round(1px,1px)]:w-[round(85vw,1px)] overflow-hidden rounded-2xl shadow-[0_24px_72px_rgba(0,0,0,0.4)]" onClick={(event) => event.stopPropagation()}>
-                    <CanvasPanoramaViewer src={src} alt={alt} proxyGeneratedPanorama={proxyGeneratedPanorama} immersive />
-                </div>
-            ) : isVideo ? (
-                <div
-                    ref={videoPlayerRef}
-                    className="relative flex max-h-[85vh] max-w-[85vw] items-center justify-center overflow-hidden rounded-2xl bg-black shadow-[0_24px_72px_rgba(0,0,0,0.4)] fullscreen:h-screen fullscreen:w-screen fullscreen:max-h-none fullscreen:max-w-none fullscreen:rounded-none [&:fullscreen>video]:h-screen [&:fullscreen>video]:w-screen [&:fullscreen>video]:max-h-none [&:fullscreen>video]:max-w-none"
-                    onClick={(event) => event.stopPropagation()}
-                    onKeyDownCapture={(event) => {
-                        if (event.code !== "Space") return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleVideoPlayback();
-                    }}
-                    data-canvas-no-zoom
-                >
-                    <video
-                        ref={videoRef}
-                        src={src}
-                        aria-label={alt}
-                        tabIndex={-1}
-                        playsInline
-                        preload="metadata"
-                        onLoadStart={() => { setVideoDuration(0); setVideoTime(0); setIsVideoPlaying(false); }}
-                        onDurationChange={(event) => setVideoDuration(event.currentTarget.duration)}
-                        onTimeUpdate={(event) => setVideoTime(event.currentTarget.currentTime)}
-                        onPlay={() => setIsVideoPlaying(true)}
-                        onPause={() => setIsVideoPlaying(false)}
-                        onVolumeChange={(event) => setVideoVolume(event.currentTarget.muted ? 0 : event.currentTarget.volume)}
-                        onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
-                        className="block max-h-[85vh] max-w-[85vw] object-contain outline-none"
-                    />
-                    <button type="button" aria-label="关闭预览" onClick={onClose} className="absolute right-4 top-4 z-20 flex size-9 items-center justify-center rounded-lg text-white transition-colors hover:bg-black/25">
-                        <X className="size-6" />
-                    </button>
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-5 pb-3 pt-24">
-                        <div className="mb-2 flex justify-between text-xs font-medium tabular-nums text-white">
-                            <span>{formatPreviewTime(videoTime)}</span>
-                            <span>{formatPreviewTime(videoDuration)}</span>
-                        </div>
-                        <input
-                            type="range"
-                            min={0}
-                            max={videoDuration || 0}
-                            step="0.01"
-                            value={Math.min(videoTime, videoDuration || 0)}
-                            aria-label="视频进度"
-                            onChange={(event) => {
-                                const time = Number(event.currentTarget.value);
-                                if (videoRef.current) videoRef.current.currentTime = time;
-                                setVideoTime(time);
-                            }}
-                            onPointerUp={() => videoRef.current?.focus({ preventScroll: true })}
-                            className="pointer-events-auto block h-1 w-full cursor-pointer appearance-none rounded-full focus-visible:outline-none [&::-moz-range-thumb]:size-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:size-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white"
-                            style={{ background: `linear-gradient(to right, #67e8f9 ${videoDuration ? Math.min(videoTime / videoDuration, 1) * 100 : 0}%, rgba(255,255,255,0.35) 0)` }}
-                        />
-                        <div className="pointer-events-auto mt-2 flex items-center justify-between">
-                            <div className="flex items-center gap-1">
-                                <button type="button" aria-label={isVideoPlaying ? "暂停" : "播放"} onPointerDown={(event) => event.preventDefault()} onClick={toggleVideoPlayback} className={VIDEO_PREVIEW_CONTROL_CLASS}>
-                                    {isVideoPlaying ? <Pause className="size-5" /> : <Play className="size-5" />}
-                                </button>
-                                <div className="group/volume flex items-center">
-                                    <button type="button" aria-label={videoVolume === 0 ? "恢复声音" : "静音"} onPointerDown={(event) => event.preventDefault()} onClick={() => { if (videoRef.current) videoRef.current.muted = !videoRef.current.muted; }} className={VIDEO_PREVIEW_CONTROL_CLASS}>
-                                        {videoVolume === 0 ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
-                                    </button>
-                                    <input type="range" min={0} max={1} step="0.01" value={videoVolume} aria-label="音量" onChange={(event) => { const volume = Number(event.currentTarget.value); if (!videoRef.current) return; if (volume === 0) videoRef.current.muted = true; else { videoRef.current.volume = volume; videoRef.current.muted = false; } }} onPointerUp={() => videoRef.current?.focus({ preventScroll: true })} className="h-1 w-0 pointer-events-none cursor-pointer appearance-none rounded-full opacity-0 transition-[width,opacity] duration-200 focus-visible:outline-none group-hover/volume:mx-1 group-hover/volume:w-20 group-hover/volume:pointer-events-auto group-hover/volume:opacity-100 [&::-moz-range-thumb]:size-2 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-white [&::-webkit-slider-thumb]:size-2 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white" style={{ background: `linear-gradient(to right, white ${videoVolume * 100}%, rgba(255,255,255,0.35) 0)` }} />
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                                <button type="button" aria-label="下载视频" onPointerDown={(event) => event.preventDefault()} onClick={onDownload} className={VIDEO_PREVIEW_CONTROL_CLASS}>
-                                    <Download className="size-5" />
-                                </button>
-                                <button type="button" aria-label="全屏播放" onPointerDown={(event) => event.preventDefault()} onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void videoPlayerRef.current?.requestFullscreen(); }} className={VIDEO_PREVIEW_CONTROL_CLASS}>
-                                    <Maximize className="size-5" />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            ) : (
-                <img
-                    ref={imgRef}
-                    src={src}
-                    alt={alt}
-                    draggable={false}
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    className={`max-h-[85vh] max-w-[85vw] object-contain rounded-2xl shadow-[0_24px_72px_rgba(0,0,0,0.4)] ${zoom > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
-                    onClick={(e) => e.stopPropagation()}
-                    onDragStart={(e) => e.preventDefault()}
-                    style={{
-                        transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
-                        transition: isDragging ? "none" : "transform 0.12s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                    }}
-                />
-            )}
-        </div>
     );
 }
 
@@ -5700,10 +5599,6 @@ function audioExtension(mimeType?: string) {
     return "mp3";
 }
 
-function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
-    return { content: image.url, storageKey: image.storageKey, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
-}
-
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4", durationMs: video.durationMs };
 }
@@ -5830,63 +5725,6 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
-}
-
-async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
-            try {
-                const content = node.metadata?.content;
-                if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
-                if (!isCanvasImageNodeType(node.type) || (!content && !node.metadata?.storageKey)) return node;
-                if (node.metadata?.storageKey) {
-                    const resolved = await resolveImageUrl(node.metadata.storageKey, "");
-                    if (resolved) return { ...node, metadata: { ...node.metadata, content: resolved } };
-                    // 解析失败：会话级 blob: 链接和 base64 一定已经失效，清空后交给"图片缺失"占位；
-                    // 远端 http 地址仍然保留，至少让用户看到原图。
-                    const fallback = content && !content.startsWith("blob:") && !content.startsWith("data:") ? content : "";
-                    return { ...node, metadata: { ...node.metadata, content: fallback } };
-                }
-                if (!content || !content.startsWith("data:image/")) return node;
-                // 内联 base64 大图转本地存储：加超时，单个节点失败不影响整张画布
-                const uploaded = await withTimeout(uploadImage(content, { localOnly: true }), 8000);
-                return { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded) } };
-            } catch (error) {
-                console.error("节点媒体恢复失败", node.id, error);
-                return node;
-            }
-        }),
-    );
-}
-
-// 恢复媒体时整体加超时兜底：底层 IndexedDB/图片解码卡住时，画布仍然可以进入
-async function hydrateCanvasImagesSafe(nodes: CanvasNodeData[]) {
-    try {
-        return await withTimeout(hydrateCanvasImages(nodes), 15000);
-    } catch (error) {
-        console.error("画布媒体恢复超时，改用原始节点", error);
-        return nodes.map((node) =>
-            node.metadata?.storageKey && (node.metadata?.content || "").startsWith("blob:")
-                ? { ...node, metadata: { ...node.metadata, content: "" } }
-                : node,
-        );
-    }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("媒体恢复超时")), timeoutMs);
-        promise.then(
-            (value) => {
-                clearTimeout(timer);
-                resolve(value);
-            },
-            (error) => {
-                clearTimeout(timer);
-                reject(error);
-            },
-        );
-    });
 }
 
 function syncAssistantReferences(sessions: CanvasAssistantSession[], nodes: CanvasNodeData[], restoreInterrupted = false, previousNode?: CanvasNodeData) {

@@ -12,6 +12,7 @@ type InfiniteCanvasProps = {
     viewport: ViewportTransform;
     tool: "select" | "pan";
     backgroundMode?: CanvasBackgroundMode;
+    gridSize?: number;
     alignmentGuides?: CanvasAlignmentGuides;
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -24,8 +25,10 @@ type InfiniteCanvasProps = {
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", alignmentGuides = {}, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, overlay, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = "lines", gridSize = 48, alignmentGuides = {}, onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, overlay, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const gridSizeRef = useRef(gridSize);
+    gridSizeRef.current = gridSize;
     const panState = useRef({
         isPanning: false,
         startX: 0,
@@ -181,7 +184,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 frameRef.current = null;
                 // 拖动画布时直接写 transform，只做一次合成，不触发 React 重渲染；
                 // 抬手时再把最终 viewport 提交给上层，十几张 4K 图也不会掉帧。
-                if (nextViewportRef.current) applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current);
+                if (nextViewportRef.current) applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current, gridSizeRef.current);
             });
         };
 
@@ -195,7 +198,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             setIsPanning(false);
             document.body.style.cursor = "";
             if (nextViewportRef.current) {
-                applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current);
+                applyViewportTransform(nextViewportRef.current, worldRef.current, gridRef.current, gridSizeRef.current);
                 onViewportChange(nextViewportRef.current);
                 nextViewportRef.current = null;
             }
@@ -246,7 +249,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
-            <CanvasGrid viewport={viewport} mode={backgroundMode} gridRef={gridRef} />
+            <CanvasGrid viewport={viewport} mode={backgroundMode} gridSize={gridSize} gridRef={gridRef} />
             {typeof alignmentGuides.vertical === "number" ? (
                 <div
                     className="pointer-events-none absolute inset-y-0 z-[90] w-px opacity-[.48]"
@@ -277,13 +280,13 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     );
 }
 
-function CanvasGrid({ viewport, mode, gridRef }: { viewport: ViewportTransform; mode: CanvasBackgroundMode; gridRef?: React.RefObject<HTMLDivElement | null> }) {
+function CanvasGrid({ viewport, mode, gridSize, gridRef }: { viewport: ViewportTransform; mode: CanvasBackgroundMode; gridSize: number; gridRef?: React.RefObject<HTMLDivElement | null> }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     if (mode === "blank") return null;
 
-    const gridSize = 48 * viewport.k;
-    const x = viewport.x % gridSize;
-    const y = viewport.y % gridSize;
+    const size = gridSize * viewport.k;
+    const x = viewport.x % size;
+    const y = viewport.y % size;
     const dotSize = viewport.k < 0.12 ? 0.8 : 1.15;
     const backgroundImage =
         mode === "dots" ? `radial-gradient(circle, ${theme.canvas.dot} ${dotSize}px, transparent ${dotSize + 0.2}px)` : `linear-gradient(${theme.canvas.line} 1px, transparent 1px), linear-gradient(90deg, ${theme.canvas.line} 1px, transparent 1px)`;
@@ -298,7 +301,7 @@ function CanvasGrid({ viewport, mode, gridRef }: { viewport: ViewportTransform; 
                     position: "absolute",
                     inset: "-340px",
                     backgroundImage,
-                    backgroundSize: `${gridSize}px ${gridSize}px`,
+                    backgroundSize: `${size}px ${size}px`,
                     transform: `translate3d(${x}px, ${y}px, 0)`,
                     willChange: "transform",
                 }}
@@ -308,10 +311,10 @@ function CanvasGrid({ viewport, mode, gridRef }: { viewport: ViewportTransform; 
 }
 
 // 平移期间直接改 DOM 样式，避免每帧 setState 触发整棵画布树重渲染
-function applyViewportTransform(next: ViewportTransform, world: HTMLElement | null, grid: HTMLElement | null) {
+function applyViewportTransform(next: ViewportTransform, world: HTMLElement | null, grid: HTMLElement | null, gridSize: number) {
     if (world) world.style.transform = `translate(${next.x}px, ${next.y}px) scale(${next.k})`;
     if (grid) {
-        const size = 48 * next.k;
+        const size = gridSize * next.k;
         grid.style.backgroundSize = `${size}px ${size}px`;
         grid.style.transform = `translate3d(${next.x % size}px, ${next.y % size}px, 0)`;
     }

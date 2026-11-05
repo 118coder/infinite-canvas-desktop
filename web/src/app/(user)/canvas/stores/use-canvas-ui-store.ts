@@ -4,11 +4,15 @@ import type { CanvasNodeMetadata, CanvasNodeType } from "../types";
 
 type CanvasUiStore = {
     generationDefaults: Partial<Record<CanvasNodeType.Image | CanvasNodeType.Video, Pick<CanvasNodeMetadata, "quality" | "size" | "vquality">>>;
+    gridSpacing: number;
+    minimapOpen: boolean;
     openProjectId: string | null;
     editingProjectId: string | null;
     editingProjectTitle: string;
     selectedProjectIds: string[];
     deleteProjectIds: string[];
+    setGridSpacing: (gridSpacing: number) => void;
+    setMinimapOpen: (minimapOpen: boolean) => void;
     setOpenProjectId: (openProjectId: string | null) => void;
     startEditingProject: (id: string, title: string) => void;
     setEditingProjectTitle: (title: string) => void;
@@ -20,11 +24,15 @@ type CanvasUiStore = {
 
 export const useCanvasUiStore = create<CanvasUiStore>()(persist((set) => ({
     generationDefaults: {},
+    gridSpacing: 48,
+    minimapOpen: false,
     openProjectId: null,
     editingProjectId: null,
     editingProjectTitle: "",
     selectedProjectIds: [],
     deleteProjectIds: [],
+    setGridSpacing: (gridSpacing) => set({ gridSpacing }),
+    setMinimapOpen: (minimapOpen) => set({ minimapOpen }),
     setOpenProjectId: (openProjectId) => set({ openProjectId }),
     startEditingProject: (editingProjectId, editingProjectTitle) => set({ editingProjectId, editingProjectTitle }),
     setEditingProjectTitle: (editingProjectTitle) => set({ editingProjectTitle }),
@@ -34,5 +42,5 @@ export const useCanvasUiStore = create<CanvasUiStore>()(persist((set) => ({
     removeSelectedProjectIds: (ids) => set((state) => ({ selectedProjectIds: state.selectedProjectIds.filter((id) => !ids.includes(id)) })),
 }), {
     name: "infinite-canvas:canvas_ui_store",
-    partialize: (state) => ({ generationDefaults: state.generationDefaults }),
+    partialize: (state) => ({ generationDefaults: state.generationDefaults, gridSpacing: state.gridSpacing, minimapOpen: state.minimapOpen }),
 }));

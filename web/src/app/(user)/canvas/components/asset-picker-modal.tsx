@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Empty, Input, Modal, Pagination, Spin, Tag } from "antd";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { App, Button, Checkbox, Empty, Input, Modal, Pagination, Tag } from "antd";
 import { ImagePlus, Plus, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useAssetFilters, recordRecentAssetId, type AssetKindFilter } from "@/hooks/use-asset-filters";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { uploadAssetMediaFile } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import type { InsertAssetPayload } from "../types";
 
 export type { InsertAssetPayload } from "../types";
@@ -18,20 +19,21 @@ type Props = {
     open: boolean;
     defaultTab?: AssetPickerTab;
     onInsert: (payload: InsertAssetPayload) => void;
+    onInsertMany?: (payloads: InsertAssetPayload[]) => void;
     onClose: () => void;
 };
 
-export function AssetPickerModal({ open, onInsert, onClose }: Props) {
+export function AssetPickerModal({ open, onInsert, onInsertMany, onClose }: Props) {
     return (
         <Modal title="选择素材" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
-            <MyAssetsTab onInsert={onInsert} />
+            <MyAssetsTab onInsert={onInsert} onInsertMany={onInsertMany} />
         </Modal>
     );
 }
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 12;
 
-const kindOptions = [
+const kindOptions: Array<{ label: string; value: AssetKindFilter }> = [
     { label: "全部", value: "all" },
     { label: "文本", value: "text" },
     { label: "图片", value: "image" },
@@ -74,44 +76,61 @@ function AssetFilters({ categories, tags, category, selectedTags, onCategoryChan
     );
 }
 
-function PickerCard({ title, kind, cover, loading, onClick }: { title: string; kind: string; cover: string; loading?: boolean; onClick: () => void }) {
+function AssetCover({ asset }: { asset: Asset }) {
+    // 订阅缩略图缓存版本，previewUrlFor 命中后触发重渲染
+    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
+    const mediaUrl = asset.kind === "image" ? asset.data.dataUrl : asset.kind === "video" ? asset.data.url : "";
+    const storageKey = asset.kind === "text" ? undefined : asset.data.storageKey;
+    const source = `${storageKey || ""}:${mediaUrl}`;
+    const cover = asset.coverUrl || mediaUrl;
+    const previewKey = `asset-card:${asset.id}`;
+    const previewUrl = previewUrlFor(previewKey, source);
+
+    useEffect(() => {
+        if (!cover) return;
+        void ensureImagePreview(previewKey, cover, storageKey, source).catch(() => undefined);
+    }, [cover, previewKey, source, storageKey]);
+
+    if (asset.kind === "video" && cover) return <video src={`${cover}#t=0.1`} muted playsInline preload="metadata" className="aspect-[4/3] w-full object-cover" />;
+    return <img src={previewUrl || cover || ""} alt={asset.title} loading="lazy" decoding="async" className="aspect-[4/3] w-full object-cover" />;
+}
+
+function PickerCard({ asset, selected, selectable, onToggle, onOpen }: { asset: Asset; selected: boolean; selectable: boolean; onToggle: () => void; onOpen: () => void }) {
     return (
-        <button
-            type="button"
-            className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500"
-            onClick={onClick}
-            disabled={loading}
-        >
-            {cover ? (
-                <img src={cover} alt={title} className="aspect-[4/3] w-full object-cover" />
-            ) : (
-                <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{title}</div>
-            )}
-            <div className="p-2.5">
-                <div className="flex items-center justify-between gap-2">
-                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
-                    <Tag className="m-0 shrink-0 text-[10px]">{kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文本"}</Tag>
+        <div className={cn("group relative overflow-hidden rounded-lg border bg-white text-left transition dark:bg-stone-900", selected ? "border-blue-500 ring-2 ring-blue-500/40" : "border-stone-200 hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:hover:border-stone-500")}>
+            <button type="button" className="block w-full cursor-pointer" onClick={onOpen}>
+                {asset.kind === "text" ? (
+                    <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{asset.data.content}</div>
+                ) : asset.kind === "audio" ? (
+                    <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{asset.title}</div>
+                ) : (
+                    <AssetCover asset={asset} />
+                )}
+                <div className="p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{asset.title}</span>
+                        <Tag className="m-0 shrink-0 text-[10px]">{asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文本"}</Tag>
+                    </div>
                 </div>
-            </div>
-            {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-stone-900/60">
-                    <Spin size="small" />
+            </button>
+            {selectable ? (
+                <div className={cn("absolute left-2 top-2 transition-opacity", selected ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
+                    <Checkbox checked={selected} onChange={onToggle} aria-label="选择素材" onClick={(event) => event.stopPropagation()} />
                 </div>
-            )}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div>
-        </button>
+            ) : null}
+        </div>
     );
 }
 
-function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
+function MyAssetsTab({ onInsert, onInsertMany }: { onInsert: (payload: InsertAssetPayload) => void; onInsertMany?: (payloads: InsertAssetPayload[]) => void }) {
     const { message } = App.useApp();
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
-    const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState("all");
-    const [category, setCategory] = useState("");
-    const [selectedTags, setSelectedTags] = useState<string[]>([]);
-    const [page, setPage] = useState(1);
+    const filters = useAssetFilters(
+        useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"), [assets]),
+        { pageSize: PAGE_SIZE },
+    );
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [createOpen, setCreateOpen] = useState(false);
     const [createKind, setCreateKind] = useState<"text" | "image" | "video" | "audio">("image");
     const [createTitle, setCreateTitle] = useState("");
@@ -121,38 +140,32 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.category ? [asset.category] : []))), [assets]);
-    const tags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))), [assets]);
+    const { keyword, setKeyword, kind, setKind, category, setCategory, selectedTags, setSelectedTags, categories, tagOptions, filtered, items, page, setPage } = filters;
 
-    const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video" || a.kind === "audio")
-            .filter((a) => kindFilter === "all" || a.kind === kindFilter)
-            .filter((a) => !category || a.category === category)
-            .filter((a) => !selectedTags.length || selectedTags.some((tag) => (a.tags || []).includes(tag)))
-            .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter, category, selectedTags]);
+    const buildPayload = (asset: Asset): InsertAssetPayload => {
+        if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title, assetId: asset.id, source: "asset" };
+        if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" };
+        if (asset.kind === "audio") return { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, bytes: asset.data.bytes, mimeType: asset.data.mimeType, durationMs: asset.data.durationMs, source: "asset" };
+        return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" };
+    };
 
-    const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
+    const selectedAssets = items.filter((asset) => selectedIds.includes(asset.id));
+    const toggleSelect = (assetId: string) => setSelectedIds((current) => (current.includes(assetId) ? current.filter((id) => id !== assetId) : [...current, assetId]));
 
-    useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-        setPage((v) => Math.min(v, maxPage));
-    }, [filtered.length]);
-
-    const handleInsert = (asset: Asset) => {
-        if (asset.kind === "text") {
-            onInsert({ kind: "text", content: asset.data.content, title: asset.title, assetId: asset.id, source: "asset" });
+    const insertSelected = () => {
+        if (!selectedAssets.length) return;
+        if (selectedAssets.length === 1) {
+            recordRecentAssetId(selectedAssets[0].id);
+            onInsert(buildPayload(selectedAssets[0]));
+        } else if (onInsertMany) {
+            onInsertMany(selectedAssets.map(buildPayload));
         } else {
-            onInsert(
-                asset.kind === "video"
-                    ? { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" }
-                    : asset.kind === "audio"
-                      ? { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, bytes: asset.data.bytes, mimeType: asset.data.mimeType, durationMs: asset.data.durationMs, source: "asset" }
-                      : { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" },
-            );
+            selectedAssets.forEach((asset) => {
+                recordRecentAssetId(asset.id);
+                onInsert(buildPayload(asset));
+            });
         }
+        setSelectedIds([]);
     };
 
     const resetCreateForm = () => {
@@ -243,36 +256,40 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
                     placeholder="搜索素材"
                     value={keyword}
                     allowClear
-                    onChange={(e) => {
-                        setPage(1);
-                        setKeyword(e.target.value);
-                    }}
+                    onChange={(e) => setKeyword(e.target.value)}
                 />
                 <div className="flex gap-1.5">
                     {kindOptions.map((opt) => (
-                        <Tag.CheckableTag
-                            key={opt.value}
-                            checked={kindFilter === opt.value}
-                            className={cn("prompt-filter-tag", kindFilter === opt.value && "is-active")}
-                            onChange={() => {
-                                setPage(1);
-                                setKindFilter(opt.value);
-                            }}
-                        >
+                        <Tag.CheckableTag key={opt.value} checked={kind === opt.value} className={cn("prompt-filter-tag", kind === opt.value && "is-active")} onChange={() => setKind(opt.value)}>
                             {opt.label}
                         </Tag.CheckableTag>
                     ))}
                 </div>
+                {onInsertMany ? (
+                    <Button size="small" type={selectedIds.length ? "primary" : "default"} disabled={!selectedIds.length} onClick={insertSelected}>
+                        插入所选{selectedIds.length ? `（${selectedIds.length}）` : ""}
+                    </Button>
+                ) : null}
                 <Button size="small" icon={<Plus className="size-3.5" />} onClick={() => setCreateOpen(true)}>
                     新增素材
                 </Button>
             </div>
-            <AssetFilters categories={categories} tags={tags} category={category} selectedTags={selectedTags} onCategoryChange={(value) => { setPage(1); setCategory(value); }} onTagsChange={(values) => { setPage(1); setSelectedTags(values); }} />
+            <AssetFilters categories={categories} tags={tagOptions} category={category} selectedTags={selectedTags} onCategoryChange={setCategory} onTagsChange={setSelectedTags} />
 
-            {visible.length ? (
+            {items.length ? (
                 <div className="grid grid-cols-4 gap-3">
-                    {visible.map((asset) => (
-                        <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
+                    {items.map((asset) => (
+                        <PickerCard
+                            key={asset.id}
+                            asset={asset}
+                            selected={selectedIds.includes(asset.id)}
+                            selectable={Boolean(onInsertMany) && asset.kind !== "text"}
+                            onToggle={() => toggleSelect(asset.id)}
+                            onOpen={() => {
+                                recordRecentAssetId(asset.id);
+                                onInsert(buildPayload(asset));
+                            }}
+                        />
                     ))}
                 </div>
             ) : (

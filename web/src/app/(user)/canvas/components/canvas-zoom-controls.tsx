@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Compass, Focus, HelpCircle, Maximize2 } from "lucide-react";
+import { Focus, HelpCircle, Maximize2 } from "lucide-react";
 import { useState } from "react";
 import { Button, Modal, Tooltip } from "antd";
 
@@ -11,11 +11,9 @@ type CanvasZoomControlsProps = {
     onScaleChange: (scale: number) => void;
     onReset: () => void;
     onFitView: () => void;
-    isMiniMapOpen: boolean;
-    onToggleMiniMap: () => void;
 };
 
-export function CanvasZoomControls({ scale, onScaleChange, onReset, onFitView, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
+export function CanvasZoomControls({ scale, onScaleChange, onReset, onFitView }: CanvasZoomControlsProps) {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -25,16 +23,6 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, onFitView, i
     return (
         <div className="absolute bottom-5 left-5 z-50" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
             <div className="flex h-14 items-center gap-1 rounded-xl border px-2 shadow-lg backdrop-blur" style={dockStyle}>
-                <Tooltip title={isMiniMapOpen ? "关闭小地图" : "打开小地图"}>
-                    <Button
-                        type="text"
-                        className="!h-8 !w-8 !min-w-8 !p-0"
-                        style={isMiniMapOpen ? activeStyle : { color: theme.toolbar.item }}
-                        icon={<Compass className="size-4" />}
-                        onClick={onToggleMiniMap}
-                        aria-label={isMiniMapOpen ? "关闭小地图" : "打开小地图"}
-                    />
-                </Tooltip>
                 <Tooltip title="重置视图">
                     <Button type="text" className="!h-8 !w-8 !min-w-8 !p-0" style={{ color: theme.toolbar.item }} icon={<Focus className="size-4" />} onClick={onReset} aria-label="重置视图" />
                 </Tooltip>

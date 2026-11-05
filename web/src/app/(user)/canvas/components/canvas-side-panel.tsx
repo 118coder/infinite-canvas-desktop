@@ -9,6 +9,7 @@ import { motion } from "motion/react";
 import { AssetFormModal } from "@/components/assets/asset-form-modal";
 import { PromptDetailDialog } from "@/components/prompts/prompt-detail-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { useAssetFilters } from "@/hooks/use-asset-filters";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
@@ -78,8 +79,8 @@ const NODE_FILTER_OPTIONS = [
     { label: "组", value: CanvasNodeType.Group },
 ];
 
-const ASSET_TYPE_OPTIONS = [
-    { label: "全部", value: "" },
+const ASSET_TYPE_OPTIONS: Array<{ label: string; value: "all" | "text" | "image" | "video" | "audio" }> = [
+    { label: "全部", value: "all" },
     { label: "文本", value: "text" },
     { label: "图片", value: "image" },
     { label: "视频", value: "video" },
@@ -301,26 +302,12 @@ function AssetSourceTab({ label, active, theme, onClick }: { label: string; acti
 
 function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme: CanvasTheme; onAdd: () => void; onAssetDragStart: (payload: InsertAssetPayload) => void; onAssetDragEnd: () => void }) {
     const assets = useAssetStore((state) => state.assets);
-    const [keyword, setKeyword] = useState("");
-    const [type, setType] = useState("");
-    const [category, setCategory] = useState("");
-    const [selectedTags, setSelectedTags] = useState<string[]>([]);
-    const [page, setPage] = useState(1);
-    const categories = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.category ? [asset.category] : []))), [assets]);
-    const tags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))), [assets]);
-    const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets.filter((asset) => (!type || asset.kind === type) && (!category || asset.category === category) && (!selectedTags.length || selectedTags.some((tag) => asset.tags.includes(tag))) && (!query || [asset.title, asset.category || "", ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
-    }, [assets, keyword, type, category, selectedTags]);
-    const items = filtered.slice((page - 1) * ASSET_PAGE_SIZE, page * ASSET_PAGE_SIZE);
-
-    useEffect(() => setPage((value) => Math.min(value, Math.max(1, Math.ceil(filtered.length / ASSET_PAGE_SIZE)))), [filtered.length]);
-    useEffect(() => setPage(1), [keyword, type, category, selectedTags]);
+    const { keyword, setKeyword, kind, setKind, category, setCategory, selectedTags, setSelectedTags, categories, tagOptions, filtered, items, page, setPage } = useAssetFilters(assets, { pageSize: ASSET_PAGE_SIZE });
 
     return (
         <>
             <div className="flex items-center gap-4 px-3 pb-2">
-                {ASSET_TYPE_OPTIONS.map((option) => <AssetSourceTab key={option.value || "all"} label={option.label} active={type === option.value} theme={theme} onClick={() => setType(option.value)} />)}
+                {ASSET_TYPE_OPTIONS.map((option) => <AssetSourceTab key={option.value} label={option.label} active={kind === option.value} theme={theme} onClick={() => setKind(option.value)} />)}
             </div>
             <div className="grid grid-cols-2 gap-2 px-3 pb-2">
                 <div className="min-w-0">
@@ -329,7 +316,7 @@ function MyAssetsTab({ theme, onAdd, onAssetDragStart, onAssetDragEnd }: { theme
                 </div>
                 <div className="min-w-0">
                     <div className="mb-1 text-xs opacity-50" style={{ color: theme.node.text }}>标签</div>
-                    <Select mode="multiple" size="small" className="w-full" value={selectedTags} placeholder="全部" allowClear maxTagCount={1} onChange={(values) => setSelectedTags(values.includes("") ? [] : values)} options={[{ label: "全部", value: "" }, ...tags.map((tag) => ({ label: tag, value: tag }))]} />
+                    <Select mode="multiple" size="small" className="w-full" value={selectedTags} placeholder="全部" allowClear maxTagCount={1} onChange={setSelectedTags} options={tagOptions.map((tag) => ({ label: tag, value: tag }))} />
                 </div>
             </div>
             <div className="flex items-center gap-2 px-3 pb-2">

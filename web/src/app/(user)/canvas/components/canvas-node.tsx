@@ -9,6 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews } from "@/services/image-storage";
+import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
@@ -798,11 +799,15 @@ function RecoveringImageContent(props: NodeContentRendererProps) {
     const storageKey = props.node.metadata?.storageKey || "";
     const [src, setSrc] = useState("");
     const [failed, setFailed] = useState(!storageKey);
+    const [repairing, setRepairing] = useState(false);
+    const [repairHint, setRepairHint] = useState("");
+    const repairInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         let cancelled = false;
         setSrc("");
         setFailed(false);
+        setRepairHint("");
         if (!storageKey) {
             setFailed(true);
             return () => {
@@ -823,6 +828,33 @@ function RecoveringImageContent(props: NodeContentRendererProps) {
         };
     }, [storageKey]);
 
+    const handleRepairFile = async (file?: File | null) => {
+        if (!file || !storageKey || repairing) return;
+        setRepairing(true);
+        setRepairHint("");
+        try {
+            const result = await repairMissingMedia([file], storageKey);
+            if (!result.repaired.length) {
+                setRepairHint("文件未匹配，请选择这张图片对应的原文件");
+                return;
+            }
+            await resolveRepairedProjects(result.repaired);
+            const url = await resolveImageUrl(storageKey, "");
+            if (url) {
+                setSrc(url);
+                window.dispatchEvent(new CustomEvent("infinite-canvas:media-repaired", { detail: { storageKey, url } }));
+            } else {
+                setFailed(true);
+                setRepairHint("已写入图片，但解析失败，请重试");
+            }
+        } catch {
+            setRepairHint("补齐失败，请重试");
+        } finally {
+            setRepairing(false);
+            if (repairInputRef.current) repairInputRef.current.value = "";
+        }
+    };
+
     if (src) return <ImageContent {...props} node={{ ...props.node, metadata: { ...props.node.metadata, content: src } }} />;
 
     return (
@@ -830,7 +862,27 @@ function RecoveringImageContent(props: NodeContentRendererProps) {
             <div className="flex size-14 items-center justify-center rounded-2xl" style={{ background: failed ? "rgba(245,158,11,.14)" : theme.toolbar.activeBg }}>
                 <ImageIcon className={`size-6 ${failed ? "opacity-70" : "animate-pulse opacity-30"}`} />
             </div>
-            <span className="text-[10px] tracking-[0.18em] opacity-70">{failed ? "图片缺失 · 请在设置中补齐" : "正在恢复图片"}</span>
+            {failed ? (
+                <>
+                    <span className="text-[10px] tracking-[0.18em] opacity-70">{repairing ? "正在补齐图片..." : repairHint || "图片缺失，可选择本地文件补齐"}</span>
+                    {!repairing ? (
+                        <>
+                            <input ref={repairInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => void handleRepairFile(event.target.files?.[0])} />
+                            <button
+                                type="button"
+                                data-canvas-no-zoom
+                                onClick={() => repairInputRef.current?.click()}
+                                className="rounded-md border px-2 py-1 text-[11px] font-medium transition hover:bg-black/5 dark:hover:bg-white/10"
+                                style={{ borderColor: theme.node.stroke, color: theme.node.text }}
+                            >
+                                选择文件补齐
+                            </button>
+                        </>
+                    ) : null}
+                </>
+            ) : (
+                <span className="text-[10px] tracking-[0.18em] opacity-70">正在恢复图片</span>
+            )}
         </div>
     );
 }

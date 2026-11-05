@@ -1,16 +1,25 @@
 "use client";
 
-import { Copy, Download, PencilLine, Search, Tag as TagIcon, Trash2, X } from "lucide-react";
+import { Copy, Download, Images, PencilLine, Search, Tag as TagIcon, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Card, Checkbox, Drawer, Dropdown, Empty, Image, Input, MenuProps, Modal, Pagination, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
+import { requestCanvasInsert } from "@/lib/canvas-handoff";
 import { formatBytes } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 import { AssetFormModal } from "@/components/assets/asset-form-modal";
+import type { InsertAssetPayload } from "@/app/(user)/canvas/types";
+
+function assetCanvasPayload(asset: Asset): InsertAssetPayload {
+    if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title, assetId: asset.id, source: "asset" };
+    if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" };
+    if (asset.kind === "audio") return { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, bytes: asset.data.bytes, mimeType: asset.data.mimeType, durationMs: asset.data.durationMs, source: "asset" };
+    return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title, assetId: asset.id, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType, source: "asset" };
+}
 
 const kindOptions = [
     { label: "全部", value: "all" },
@@ -193,6 +202,16 @@ export default function AssetsPage() {
         if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
         const url = asset.kind === "image" ? asset.data.dataUrl : asset.data.url;
         saveAs(url, `${asset.title || "asset"}.${asset.data.mimeType.split("/")[1] || "png"}`);
+    };
+
+    const insertIntoCanvas = (asset: Asset) => {
+        const result = requestCanvasInsert([assetCanvasPayload(asset)]);
+        if (!result.ok || !result.projectId) {
+            message.warning("还没有打开过画布，请先打开一个画布再插入素材");
+            return;
+        }
+        message.success("已排队插入画布，正在打开...");
+        setTimeout(() => window.location.assign(`/canvas?project=${encodeURIComponent(result.projectId!)}`), 600);
     };
 
     const exportAllAssets = async () => {
@@ -416,6 +435,7 @@ export default function AssetsPage() {
                                 onCopyImage={copyAssetImage}
                                 onCopyStorageKey={copyStorageKey}
                                 onDownload={downloadAsset}
+                                onInsertCanvas={insertIntoCanvas}
                                 onDelete={() => setDeletingAssets([asset])}
                             />
                         ))}
@@ -493,6 +513,7 @@ function AssetCard({
     onCopyImage,
     onCopyStorageKey,
     onDownload,
+    onInsertCanvas,
     onDelete,
 }: {
     asset: Asset;
@@ -504,6 +525,7 @@ function AssetCard({
     onCopyImage: (asset: Asset) => void;
     onCopyStorageKey: (asset: Asset) => void;
     onDownload: (asset: Asset) => void;
+    onInsertCanvas: (asset: Asset) => void;
     onDelete: () => void;
 }) {
     const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
@@ -513,6 +535,7 @@ function AssetCard({
         { key: "select", label: selected ? "取消选择" : "选择此素材", onClick: onToggleSelect },
         { type: "divider" as const },
         { key: "edit", icon: <PencilLine className="size-3.5" />, label: "编辑", onClick: onEdit },
+        { key: "insertCanvas", icon: <Images className="size-3.5" />, label: "插入画布", onClick: () => onInsertCanvas(asset) },
         ...(asset.kind === "text" ? [{ key: "copy", icon: <Copy className="size-3.5" />, label: "复制文本", onClick: () => onCopy(asset) }] : []),
         ...(asset.kind === "image" ? [{ key: "copyImage", icon: <Copy className="size-3.5" />, label: "复制图片", onClick: () => void onCopyImage(asset) }] : []),
         ...(asset.kind !== "text" ? [{ key: "storageKey", label: "复制 storageKey", onClick: () => void onCopyStorageKey(asset) }] : []),
