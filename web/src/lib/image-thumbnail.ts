@@ -22,9 +22,9 @@ export function pickImageSource({ previewUrl, originalUrl, naturalWidth, natural
     return requiredLongEdge > previewLongEdge ? originalUrl : previewUrl;
 }
 
-export async function createImageThumbnail(blob: Blob) {
+export async function createImageThumbnail(blob: Blob, maxEdge: number = CANVAS_IMAGE_PREVIEW_MAX_EDGE) {
     const bitmap = await createImageBitmap(blob);
-    const scale = Math.min(1, CANVAS_IMAGE_PREVIEW_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     if (scale === 1) {
         bitmap.close();
         return undefined;

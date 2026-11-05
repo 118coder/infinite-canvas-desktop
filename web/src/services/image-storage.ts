@@ -101,7 +101,14 @@ export function getImagePreviewRevision() {
     return previewRevision;
 }
 
-export async function ensureImagePreview(key: string, url?: string, storageKey?: string, source = storageKey || url || "", cachedOnly = false): Promise<string | undefined> {
+// 小档预览：左栏 40px 行缩略图等小图场景专用，key 加后缀与主档（1536）分开存取
+export const SMALL_IMAGE_PREVIEW_MAX_EDGE = 256;
+
+export function smallImagePreviewKey(key: string) {
+    return `${key}@256`;
+}
+
+export async function ensureImagePreview(key: string, url?: string, storageKey?: string, source = storageKey || url || "", cachedOnly = false, maxEdge?: number): Promise<string | undefined> {
     if (!key || !source) return undefined;
     if (isLocalImageSource(url) || isComfyImageSource(storageKey) || isComfyImageSource(url)) {
         await deleteImagePreviews([key]);
@@ -121,7 +128,7 @@ export async function ensureImagePreview(key: string, url?: string, storageKey?:
     if (running?.source === source) return running.promise;
 
     const epoch = previewEpochs.get(key) || 0;
-    const promise = loadImagePreview(key, source, epoch, url, storageKey, cachedOnly).catch(() => undefined);
+    const promise = loadImagePreview(key, source, epoch, url, storageKey, cachedOnly, maxEdge).catch(() => undefined);
     previewRequests.set(key, { source, promise });
     try {
         return await promise;
@@ -158,7 +165,7 @@ export async function deleteUnusedImagePreviews(prefix: string, usedKeys: Readon
     await deleteImagePreviews(keys.filter((key) => key.startsWith(prefix) && !usedKeys.has(key)));
 }
 
-async function loadImagePreview(key: string, source: string, epoch: number, url?: string, storageKey?: string, cachedOnly = false) {
+async function loadImagePreview(key: string, source: string, epoch: number, url?: string, storageKey?: string, cachedOnly = false, maxEdge?: number) {
     const isCurrent = () => previewSources.get(key) === source && previewEpochs.get(key) === epoch;
     await previewDeletes.get(key);
     if (!isCurrent()) return undefined;
@@ -181,7 +188,7 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
         const response = await fetch(getProxyUrl(resolvedUrl));
         if (!response.ok || !isCurrent()) return undefined;
         const blob = await response.blob();
-        const preview = await createImageThumbnail(blob);
+        const preview = await createImageThumbnail(blob, maxEdge);
         if (!isCurrent()) return undefined;
 
         await previewStore.setItem<StoredImagePreview>(key, {

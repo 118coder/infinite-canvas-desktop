@@ -13,7 +13,7 @@ import { createVideoGenerationTask, pollVideoGenerationTaskStatus, VIDEO_POLL_IN
 import { comfyOutputStorageKey, getWorkflowTask, submitWorkflowTask, workflowMediaSource, type WorkflowGenerationTask } from "@/services/api/workflow-generation";
 import type { WorkflowRef } from "@/lib/workflow-channel";
 import { channelProtocolForConfig, defaultConfig, resolveModelForCapability, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
+import { collectImageStorageKeys, deleteImagePreviews, deleteStoredImages, deleteUnusedImagePreviews, ensureImagePreview, resolveImageUrl, smallImagePreviewKey, uploadImage, uploadRemoteImageToServer, type UploadedImage } from "@/services/image-storage";
 import { downloadRemoteMedia, resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -669,7 +669,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const previewKeys = new Set(
                 resetNodes
                     .filter((node) => isCanvasImageNodeType(node.type))
-                    .map((node) => `canvas-node:${projectId}:${node.id}`),
+                    .flatMap((node) => {
+                        const key = `canvas-node:${projectId}:${node.id}`;
+                        return [key, smallImagePreviewKey(key)];
+                    }),
             );
             // 恢复链路任何一步抛错都不能让画布停在骨架屏：先渲染节点，媒体再兜底。
             let restoredNodes: CanvasNodeData[] = resetNodes;

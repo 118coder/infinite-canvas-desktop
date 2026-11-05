@@ -13,7 +13,7 @@ import { useAssetFilters } from "@/hooks/use-asset-filters";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
-import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
+import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, smallImagePreviewKey, SMALL_IMAGE_PREVIEW_MAX_EDGE, subscribeImagePreviews } from "@/services/image-storage";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
@@ -184,6 +184,19 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
     const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
 
+    // 40px 行缩略图用 256px 小档预览（解码体积比 1536 主档小一个量级），缺了就地生成
+    useEffect(() => {
+        nodes.forEach((node) => {
+            if (!isCanvasImageNodeType(node.type) || !node.metadata?.content) return;
+            const content = node.metadata.content;
+            const storageKey = node.metadata.storageKey;
+            const source = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
+            const key = smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`);
+            if (previewUrlFor(key, source)) return;
+            void ensureImagePreview(key, content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
+        });
+    }, [nodes, projectId]);
+
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return nodes.filter((node) => {
@@ -230,6 +243,9 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                             const Icon = NODE_TYPE_ICON[node.type] || FileText;
                             const hasImage = isCanvasImageNodeType(node.type) && node.metadata?.content;
                             const active = selectedNodeIds.has(node.id);
+                            const previewSource = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${node.metadata?.storageKey || node.metadata?.content}`;
+                            const rowKey = `canvas-node:${projectId}:${node.id}`;
+                            const rowImage = previewUrlFor(smallImagePreviewKey(rowKey), previewSource) || previewUrlFor(rowKey, previewSource) || node.metadata?.content;
                             return (
                                 <div key={node.id} className={cn("relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_64px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
                                     {depth ? <span className="pointer-events-none absolute -left-3 top-[calc(-50%-0.4rem)] h-[calc(100%+0.4rem)] w-3 rounded-bl-md border-b border-l opacity-45" style={{ borderColor: theme.node.stroke }} /> : null}
@@ -248,19 +264,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                                     >
                                         <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md">
                                             {hasImage ? (
-                                                <img
-                                                    src={
-                                                        previewUrlFor(
-                                                            `canvas-node:${projectId}:${node.id}`,
-                                                            `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${node.metadata?.storageKey || node.metadata?.content}`,
-                                                        ) || node.metadata?.content
-                                                    }
-                                                    alt={node.title}
-                                                    loading="lazy"
-                                                    decoding="async"
-                                                    draggable={false}
-                                                    className="size-full object-cover"
-                                                />
+                                                <img src={rowImage} alt={node.title} loading="lazy" decoding="async" draggable={false} className="size-full object-cover" />
                                             ) : (
                                                 <Icon className="size-5 opacity-60" />
                                             )}
