@@ -32,6 +32,8 @@ type CanvasNodeProps = {
     referenceSelectionState?: "target" | "disabled" | "available";
     showPanel: boolean;
     showImageInfo: boolean;
+    /** 缩小态：跳过标题、拉伸柄、连线端点与面板等装饰，但保持图片 DOM 树不变，避免切换时图片重建闪烁。 */
+    lightweight?: boolean;
     mentionReferences?: CanvasResourceReference[];
     now?: number;
     renderPanel?: (node: CanvasNodeData) => ReactNode;
@@ -95,6 +97,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     referenceSelectionState,
     showPanel,
     showImageInfo,
+    lightweight = false,
     mentionReferences = [],
     now,
     renderPanel,
@@ -317,13 +320,13 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${referenceSelectionState === "available" ? "cursor-pointer" : referenceSelectionState ? "cursor-not-allowed" : ""}`}
+            className={`node-element absolute flex select-none flex-col ${lightweight ? "" : "transition-shadow duration-200"} ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${referenceSelectionState === "available" ? "cursor-pointer" : referenceSelectionState ? "cursor-not-allowed" : ""}`}
             style={{
                 transform: `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
                 height: data.height,
-                transition: "box-shadow 200ms ease",
-                contain: "layout style",
+                transition: lightweight ? "none" : "box-shadow 200ms ease",
+                contain: lightweight ? "layout style paint" : "layout style",
             }}
             onMouseEnter={() => {
                 setHovered(true);
@@ -344,7 +347,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 else onContextMenu(event, data.id);
             }}
         >
-            {!referenceSelectionState ? <div
+            {!lightweight && !referenceSelectionState ? <div
                 className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]"
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -381,7 +384,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </button>
                 )}
             </div> : null}
-            {isGroup && !referenceSelectionState ? (
+            {!lightweight && isGroup && !referenceSelectionState ? (
                 <div className="pointer-events-none absolute right-3 top-[-28px] z-[65] text-xs opacity-75" style={{ color: theme.node.text }}>
                     {groupChildCount} 个节点
                 </div>
@@ -390,7 +393,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             <div
                 className={`relative h-full w-full overflow-visible border ${isGroup ? "rounded-xl" : "rounded-3xl border-2"}`}
                 style={{
-                    background: isGroup ? theme.node.panel : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
+                    background: isGroup ? (lightweight ? "transparent" : theme.node.panel) : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                     borderColor: isGroup ? isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke : hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
                     boxShadow: isGroupDropTarget ? `0 0 0 2px ${selectionBlue}66` : isGroup && isSelected ? `0 0 0 1px ${selectionBlue}55` : isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
@@ -459,9 +462,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                     ) : null}
                 </div>
 
-                {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
+                {!lightweight && showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
-                {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
+                {!lightweight && !isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
                 {referenceSelectionState && (referenceSelectionState !== "available" || hovered) ? (
                     <div className="pointer-events-none absolute inset-0 z-[60] grid place-items-center rounded-[inherit]" style={{ background: `color-mix(in srgb, ${theme.canvas.background} ${referenceSelectionState === "target" ? 78 : referenceSelectionState === "disabled" ? 60 : 34}%, transparent)`, boxShadow: referenceSelectionState === "available" ? `inset 0 0 0 2px ${selectionBlue}` : undefined }}>
@@ -469,20 +472,20 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {!referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
+                {!lightweight && !referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
+                {!lightweight && !referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
+                {!lightweight && !referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
+                {!lightweight && !referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
             </div>
 
-            {!referenceSelectionState && !isGroup ? (
+            {!lightweight && !referenceSelectionState && !isGroup ? (
                 <>
                     <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
                     <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
                 </>
             ) : null}
 
-            {!referenceSelectionState && showPanel && !isGroup && renderPanel ? <div className={"absolute left-1/2 top-full z-[70] max-w-[calc(100vw-24px)] -translate-x-1/2 pt-4 " + (isCanvasImageNodeType(data.type) || data.type === CanvasNodeType.Video || data.type === CanvasNodeType.Audio ? "w-[682px]" : "w-[500px]")} style={{ transform: "scale(var(--canvas-inverse-scale))", transformOrigin: "top center" }}>{renderPanel(data)}</div> : null}
+            {!lightweight && !referenceSelectionState && showPanel && !isGroup && renderPanel ? <div className={"absolute left-1/2 top-full z-[70] max-w-[calc(100vw-24px)] -translate-x-1/2 pt-4 " + (isCanvasImageNodeType(data.type) || data.type === CanvasNodeType.Video || data.type === CanvasNodeType.Audio ? "w-[682px]" : "w-[500px]")} style={{ transform: "scale(var(--canvas-inverse-scale))", transformOrigin: "top center" }}>{renderPanel(data)}</div> : null}
         </div>
     );
 }, areCanvasNodePropsEqual);
@@ -494,6 +497,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
     if (prev.data !== next.data) return false;
     if (prev.showPanel || next.showPanel) return false;
     if (prev.scale !== next.scale) return false;
+    if (prev.lightweight !== next.lightweight) return false;
     if (prev.isSelected !== next.isSelected) return false;
     if (prev.isRelated !== next.isRelated) return false;
     if (prev.isFocusRelated !== next.isFocusRelated) return false;
@@ -980,7 +984,9 @@ function ImageContent({
     // 从目标档一路回退到 @256。换档时先把新位图预解码再替换 <img src>，
     // 否则 src 一变浏览器会先清空图像再解码，那一帧就是用户看到的闪烁。
     const cachedPreview = fallbackKeys.map((key) => previewUrlFor(key, previewSource)).find((url) => Boolean(url)) || "";
-    const targetSrc = cachedPreview || (isLocalSource ? content : "");
+    // 任何档位都未就绪时先显示原内容，避免 src 为空出现一次空白帧；
+    // 后台小档生成完成后会预解码再平滑替换。
+    const targetSrc = cachedPreview || content;
     const [displaySrc, setDisplaySrc] = useState(() => targetSrc);
     useEffect(() => {
         if (!targetSrc || targetSrc === displaySrc) return;

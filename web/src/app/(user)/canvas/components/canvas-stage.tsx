@@ -58,9 +58,13 @@ export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, 
     const { normalPath, hitConnections, activeConnections } = useMemo(() => collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds }), [connections, nodeById, rect, selectedConnectionId, relatedConnectionIds]);
     // 用 live 缩放判定，缩放手势跨过阈值时立即切到瓦片，不会在手势中继续挂载完整节点；
     // 平移时 k 不变，判定保持稳定。传给节点的 scale 仍是 committed 值，避免手势中反复换档解码。
-    const liveScale = viewportStore.getLive().k;
-    const lightweight = lightweightRef.current ? liveScale < LIGHTWEIGHT_EXIT_SCALE : liveScale < LIGHTWEIGHT_ENTER_SCALE;
-    lightweightRef.current = lightweight;
+    // 手势期间冻结节点形态：跨过阈值也不在拖拽/缩放途中增删装饰元素，
+    // 等手势结束的 commit 再一次性切换，避免画面出现"刷新"感。
+    if (!viewportStore.isGestureActive()) {
+        const liveScale = viewportStore.getLive().k;
+        lightweightRef.current = lightweightRef.current ? liveScale < LIGHTWEIGHT_EXIT_SCALE : liveScale < LIGHTWEIGHT_ENTER_SCALE;
+    }
+    const lightweight = lightweightRef.current;
 
     return (
         <>

@@ -59,7 +59,9 @@
 ### 渲染裁剪、DOM LOD 与 memo 约定
 
 - 视口裁剪在独立的 `components/canvas-stage.tsx`：订阅裁剪 tick，用 `canvas-spatial-index.ts` 网格桶增量计算，边距恒定 280 屏幕像素
-- **两级 LOD**：用双阈值迟滞判定，当前完整态要 `live.k < 0.4` 才进入轻量态，当前轻量态要 `live.k > 0.55` 才退出；否则反复缩放跨边界会整套替换节点 DOM，表现为画面闪烁。轻量态全部渲染 `CanvasNodeTile`，放大后才用完整 `CanvasNode`。判定用 live.k，传给节点的 `scale` 用 committed.k（手势中冻结，避免反复换档解码）
+- **两级 LOD 是同一个组件**：`CanvasNode` 用 `lightweight` prop 控制，缩小态只跳过标题、四角拉伸柄、连线端点、信息条与底部面板，**`NodeContent` → `ImageContent` → `<img>` 这棵子树必须原样保留**。早先拆成 `CanvasNodeTile` / `CanvasNode` 两个组件，跨阈值时 React 会卸载重建整套 DOM 与 `<img>`，图片重新加载就是用户看到的"偶尔刷新"，这个做法已废弃
+- 判定用双阈值迟滞（完整态 `live.k < 0.4` 进入轻量，轻量态 `live.k > 0.55` 退出），且**手势期间冻结形态**（`viewportStore.isGestureActive()` 时不更新 `lightweightRef`），只在手势结束的 commit 一次性切换。传给节点的 `scale` 用 committed.k（手势中冻结，避免反复换档解码）
+- 图片 `src` 永远不为空：档位未就绪时兜底 `content`，换档前 `new Image().decode()` 预解码，切换时保留上一张图（`displaySrc`），任何时刻都不出现空白帧
 - `CanvasNode`、`CanvasNodeTile`、`ConnectionPath`、`CanvasToolbar`、`CanvasZoomControls`、`CanvasSidePanel` 都是 memo：**传给它们的回调必须 useCallback 保持稳定引用**，否则 memo 失效
 - 连线层按视口裁剪，未激活连线合并为单条 path；不要恢复 10000×10000 固定 SVG 或 `translateZ(0)`
 - 左栏列表虚拟化：行高必须保持等高 56px（`NODE_ROW_HEIGHT`），改行内容高度要同步改 stride 与 `contain-intrinsic-size`；选中定位逻辑依赖等高假设

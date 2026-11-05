@@ -69,7 +69,6 @@ import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canva
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
-import { CanvasNodeTile } from "../components/canvas-node-tile";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode, type CanvasVideoFrameOption } from "../components/canvas-node-prompt-panel";
 import type { CanvasVideoResourceOption } from "../components/canvas-video-settings-popover";
 import { CanvasToolbar } from "../components/canvas-toolbar";
@@ -4842,8 +4841,6 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         }
         setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId });
     }, []);
-    const openTilePreview = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
-
     const handleSidePanelWidthChange = useCallback((width: number) => setSidePanel((current) => ({ ...current, width })), []);
     const handleAssetDragStart = useCallback((payload: InsertAssetPayload) => { draggedAssetPayloadRef.current = payload; }, []);
     const handleAssetDragEnd = useCallback(() => {
@@ -4946,22 +4943,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         collapsingBatchIds={collapsingBatchIds}
                         onSelectConnection={selectConnection}
                         onConnectionContextMenu={openConnectionContextMenu}
-                        renderNode={(node, scale, lightweight) => {
-                            if (lightweight) {
-                                return (
-                                    <CanvasNodeTile
-                                        key={node.id}
-                                        data={node}
-                                        isSelected={selectedNodeIds.has(node.id)}
-                                        onMouseDown={handleNodeMouseDown}
-                                        onContextMenu={openNodeContextMenu}
-                                        onViewImage={openTilePreview}
-                                    />
-                                );
-                            }
-                            return (
+                        renderNode={(node, scale, lightweight) => (
                             <CanvasNode
                                 key={node.id}
+                                lightweight={lightweight}
                                 data={node}
                                 scale={scale}
                                 isSelected={selectedNodeIds.has(node.id)}
@@ -5051,8 +5036,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                 onSelectReference={selectNodeReference}
                                 onContextMenu={openNodeContextMenu}
                             />
-                            );
-                        }}
+                        )}
                     >
                         {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
                         {nodeCreatePosition ? (
