@@ -5,6 +5,14 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+## v0.10.0 发版与检查更新（本轮）
+
+- `VERSION` 已升到 `v0.10.0`，正式发行版由 tag `v0.10.0` 触发 Release 工作流产出（exe + `infinite-canvas-v0.10.0-win-x64.zip`），与 `desktop-latest` 滚动包相互独立
+- 检查更新只认 `draft=false && prerelease=false` 的正式发行版，滚动包不会被误判为新版本；当前版本取构建时注入的 `NEXT_PUBLIC_APP_VERSION`（即 `VERSION` 文件）
+- Releases API 不可用（限流或网络受限）时回退读取仓库 main 的 `VERSION` 与 `CHANGELOG`，仍能给出「有无新版 + 摘要」；只有成功才写入 24 小时静默检查时间，网络抖动不会把检查压后一天
+- 旧的 `hooks/use-version-check.ts` 与 `components/layout/version-release-modal.tsx`（数据源指向 tigerowo 旧仓库、全仓无引用）已删除
+- 待人工验证：设置 → 关于 点「检查更新」，应显示「已是最新版本」且最新版本为 `v0.10.0`；顶部版本号与设置齿轮都不出现绿点；如手上有 v0.9.0 的 exe，打开后应提示发现 `v0.10.0`，点「前往下载」能打开对应发行页
+
 ## 视觉连续性：零黑框、零刷新闪烁（本轮，需优先验证）
 
 - **硬性要求**：缩小、放大、反复来回滚轮缩放、中键连续拖拽，画面都不允许出现刷新、闪白/闪黑、图片消失又出现，也不能出现无内容的纯色/黑色框

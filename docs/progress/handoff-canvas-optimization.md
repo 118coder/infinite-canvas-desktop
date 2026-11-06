@@ -34,7 +34,7 @@
 - 设置弹窗顶部「关于」区块（`app-config-modal.tsx` 内 `UpdateSection`）：当前版本 + 检查更新按钮 + 新版本前 4 条变更摘要 + 「前往下载」（开 Releases 页，不强制不自动下载）
 - 首页顶栏与画布页顶栏的设置齿轮：有新版时显示绿点
 - 版本号来源：构建时把根目录 `VERSION` 注入 `NEXT_PUBLIC_APP_VERSION`（`build-desktop.yml` / `release.yml` / `build-desktop.ps1` 已改）；未注入时显示「开发版（未打包）」且不弹提示
-- 旧设施 `hooks/use-version-check.ts` + `components/layout/version-release-modal.tsx` 已无引用（数据源指向 tigerowo 旧仓库），**确认无用后可删**，本次未动
+- ~~旧设施 `hooks/use-version-check.ts` + `components/layout/version-release-modal.tsx`~~ 已在 v0.10.0 发版时删除（数据源指向 tigerowo 旧仓库且全仓无引用）；检查更新统一走 `stores/use-update-store.ts`
 
 ## 二、必须了解的机制（改错会直接回归）
 
@@ -81,7 +81,7 @@
 2. **CI 的 go-test 长期红**：多次确认是既有失败（前端改动前后均红），**与本批全部改动无关**，但一直没排查根因；本地 `go build ./desktop` 也会因 go.sum 缺 `go-webview2` 条目失败（云端工作流构建前会 `go mod tidy`，属正常）。建议单独排查 go-test。
 3. **本地 Go 环境损坏**：`C:\go` 的 go 二进制报「GOROOT is not set」，需 `export GOROOT=C:\go` 才能使用（Git Bash）；未修复。
 4. **发版积压**：`VERSION` 仍是 v0.9.0，`CHANGELOG.md` 的 `Unreleased` 已累积五批变更；用户要求发版时按 `AGENTS.md` 发版流程整理。
-5. **清理候选**：`use-version-check.ts` / `version-release-modal.tsx`（无引用、数据源过期）；确认后删除。
+5. ~~**清理候选**：`use-version-check.ts` / `version-release-modal.tsx`~~ 已完成删除。
 6. **桌面版体验**：WebView2 GPU 参数是否实际生效未在真机验证（可在 `edge://gpu` 确认）。
 
 ## 四、构建与交付流程（用户强依赖）
