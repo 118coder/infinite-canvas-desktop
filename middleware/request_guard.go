@@ -31,7 +31,7 @@ const defaultBodyLimit = 10 << 20
 // BodyLimit 给所有请求套上请求体大小上限。
 func BodyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limit := defaultBodyLimit
+		var limit int64 = defaultBodyLimit
 		path := c.Request.URL.Path
 		for _, rule := range bodyLimitRules {
 			if len(path) >= len(rule.prefix) && path[:len(rule.prefix)] == rule.prefix {

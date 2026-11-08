@@ -89,6 +89,17 @@ func parseFlags(fs *flag.FlagSet, args []string) {
 	}
 }
 
+// flagChanged 判断某个 flag 是否被显式传入（flag.FlagSet 没有现成的 Changed 方法）。
+func flagChanged(fs *flag.FlagSet, name string) bool {
+	changed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			changed = true
+		}
+	})
+	return changed
+}
+
 const usageText = `canvas-cli：AI 自动生图 / 审稿命令行（独立于画布主程序）
 
 用法：
@@ -166,40 +177,40 @@ func cmdConfigSet(args []string) {
 		failf("没有要修改的配置项")
 	}
 	cfg := loadConfig()
-	if fs.Changed("protocol") {
+	if flagChanged(fs, "protocol") {
 		if protocol != "openai" && protocol != "gemini" {
 			failf("protocol 只支持 openai 或 gemini")
 		}
 		cfg.Protocol = protocol
 	}
-	if fs.Changed("base-url") {
+	if flagChanged(fs, "base-url") {
 		if parsed, err := url.Parse(baseURL); err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			failf("base-url 格式错误")
 		}
 		cfg.BaseURL = strings.TrimRight(baseURL, "/")
 	}
-	if fs.Changed("api-key") {
+	if flagChanged(fs, "api-key") {
 		cfg.APIKey = strings.TrimSpace(apiKey)
 	}
-	if fs.Changed("image-model") {
+	if flagChanged(fs, "image-model") {
 		cfg.ImageModel = strings.TrimSpace(imageModel)
 	}
-	if fs.Changed("review-model") {
+	if flagChanged(fs, "review-model") {
 		cfg.ReviewModel = strings.TrimSpace(reviewModel)
 	}
-	if fs.Changed("review-base-url") {
+	if flagChanged(fs, "review-base-url") {
 		cfg.ReviewBaseURL = strings.TrimSpace(reviewBaseURL)
 	}
-	if fs.Changed("review-api-key") {
+	if flagChanged(fs, "review-api-key") {
 		cfg.ReviewAPIKey = strings.TrimSpace(reviewAPIKey)
 	}
-	if fs.Changed("size") {
+	if flagChanged(fs, "size") {
 		cfg.Size = strings.TrimSpace(size)
 	}
-	if fs.Changed("quality") {
+	if flagChanged(fs, "quality") {
 		cfg.Quality = strings.TrimSpace(quality)
 	}
-	if fs.Changed("timeout") {
+	if flagChanged(fs, "timeout") {
 		if *timeout <= 0 {
 			failf("timeout 必须大于 0")
 		}
