@@ -206,12 +206,12 @@ func beginLinuxDoOAuth(w http.ResponseWriter, redirect string) (string, error) {
 	linuxDoOAuthStatesMu.Lock()
 	if len(linuxDoOAuthStates) > 1000 {
 		for key, entry := range linuxDoOAuthStates {
-			if now().After(entry.expiresAt) {
+			if time.Now().After(entry.expiresAt) {
 				delete(linuxDoOAuthStates, key)
 			}
 		}
 	}
-	linuxDoOAuthStates[nonce] = linuxDoOAuthState{redirect: redirect, expiresAt: now().Add(linuxDoOAuthStateTTL)}
+	linuxDoOAuthStates[nonce] = linuxDoOAuthState{redirect: redirect, expiresAt: time.Now().Add(linuxDoOAuthStateTTL)}
 	linuxDoOAuthStatesMu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name:     linuxDoOAuthStateCookie,
@@ -233,7 +233,7 @@ func consumeLinuxDoOAuth(r *http.Request, state string) (string, error) {
 	entry, ok := linuxDoOAuthStates[state]
 	delete(linuxDoOAuthStates, state)
 	linuxDoOAuthStatesMu.Unlock()
-	if !ok || now().After(entry.expiresAt) {
+	if !ok || time.Now().After(entry.expiresAt) {
 		return "", safeMessageError{message: "登录状态无效或已过期，请重新发起 Linux.do 登录"}
 	}
 	return entry.redirect, nil
