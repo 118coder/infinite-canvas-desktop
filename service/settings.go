@@ -211,7 +211,9 @@ func normalizePublicSettingWithChannels(setting model.PublicSetting, channels []
 		setting.ModelChannel.AllowUserRemoteChannel = &enabled
 	}
 	if setting.Auth.AllowRegister == nil {
-		enabled := true
+		// 公网部署下开放注册容易被滥用（批量注册、SSRF 探测、日志灌库），默认收紧为关闭，
+		// 需要开放的管理员在后台设置里手动打开；桌面版单机场景不受影响。
+		enabled := false
 		setting.Auth.AllowRegister = &enabled
 	}
 	setting.ModelChannel.AvailableModels = filterEnabledModels(setting.ModelChannel.AvailableModels, enabledChannelModels(channels))
@@ -390,6 +392,12 @@ func HTTPClientForChannel(channel model.ModelChannel) *http.Client {
 	timeout := channel.Timeout
 	if timeout <= 0 {
 		timeout = 600
+	}
+	if channel.Untrusted {
+		// 不可信渠道（非管理员用户的本地渠道）：复用 SSRF 防护拨号，禁止访问本地/内网地址。
+		client := *SafeProxyHTTPClient()
+		client.Timeout = time.Duration(timeout) * time.Second
+		return &client
 	}
 	return &http.Client{Timeout: time.Duration(timeout) * time.Second}
 }

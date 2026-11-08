@@ -2,6 +2,7 @@ package router
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tigerowo/infinite-canvas/handler"
@@ -13,6 +14,7 @@ func New() *gin.Engine {
 	router.RedirectTrailingSlash = false
 	_ = router.SetTrustedProxies(nil)
 	api := router.Group("/api")
+	api.Use(middleware.BodyLimit())
 	api.GET("/health", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
@@ -120,7 +122,7 @@ func New() *gin.Engine {
 	})
 	v1.GET("/user-data/assets", gin.WrapF(handler.UserAssetData))
 	v1.POST("/user-data/assets", gin.WrapF(handler.SaveUserAssetData))
-	api.GET("/proxy-image", gin.WrapF(handler.ProxyImage))
+	api.GET("/proxy-image", middleware.RateLimit(900, time.Minute), gin.WrapF(handler.ProxyImage))
 	api.GET("/prompts", middleware.OptionalAuth, gin.WrapF(handler.Prompts))
 	api.GET("/agent-skills", gin.WrapF(handler.AgentSkills))
 	api.GET("/agent-skills/:id/file", func(c *gin.Context) {

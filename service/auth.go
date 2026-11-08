@@ -2,16 +2,20 @@ package service
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tigerowo/infinite-canvas/config"
@@ -105,7 +109,9 @@ func Register(username string, password string) (model.AuthSession, error) {
 	return newSession(user)
 }
 
-func Login(username string, password string) (model.AuthSession, error) {
+const defaultAdminPassword = "infinite-canvas" // 与 config.go 的 ADMIN_PASSWORD envDefault 保持一致
+
+func Login(r *http.Request, username string, password string) (model.AuthSession, error) {
 	user, ok, err := repository.GetUserByUsername(strings.TrimSpace(username))
 	if err != nil {
 		return model.AuthSession{}, err
@@ -115,6 +121,11 @@ func Login(username string, password string) (model.AuthSession, error) {
 	}
 	if user.Status == model.UserStatusBan {
 		return model.AuthSession{}, safeMessageError{message: "账号已被禁用"}
+	}
+	// 仍在使用公开默认密码的管理员账号，不允许来自非本机的登录，防止公网部署被默认凭据接管。
+	// 桌面版（仅绑定 127.0.0.1）不受影响。
+	if user.Role == model.UserRoleAdmin && usesDefaultAdminPassword(user) && !isLoopbackRequest(r) {
+		return model.AuthSession{}, safeMessageError{message: "管理员账号仍在使用默认密码，为防止公网接管仅允许本机登录；请在本机登录后修改密码，或在环境变量 ADMIN_PASSWORD 配置强密码"}
 	}
 	normalizeUserDefaults(&user)
 	user.LastLoginAt = now()
@@ -126,7 +137,23 @@ func Login(username string, password string) (model.AuthSession, error) {
 	return newSession(user)
 }
 
-func LinuxDoAuthorizeURL(r *http.Request, redirect string) (string, error) {
+// usesDefaultAdminPassword 判断账号密码是否仍是公开的初始默认值（与 env 配置无关，看实际存储的哈希）。
+func usesDefaultAdminPassword(user model.User) bool {
+	return bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(defaultAdminPassword)) == nil
+}
+
+// isLoopbackRequest 判断请求是否来自本机回环地址；只看 TCP 对端，不信任任何转发头。
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
+}
+
+func LinuxDoAuthorizeURL(w http.ResponseWriter, r *http.Request, redirect string) (string, error) {
+	redirect = safeRedirectPath(redirect)
 	settings, err := repository.GetSettings()
 	if err != nil {
 		return "", err
@@ -144,12 +171,79 @@ func LinuxDoAuthorizeURL(r *http.Request, redirect string) (string, error) {
 	values.Set("redirect_uri", linuxDoRedirectURI(r))
 	values.Set("response_type", "code")
 	values.Set("scope", "read")
-	values.Set("state", base64.RawURLEncoding.EncodeToString([]byte(redirect)))
+	state, err := beginLinuxDoOAuth(w, redirect)
+	if err != nil {
+		return "", err
+	}
+	values.Set("state", state)
 	return config.Cfg.LinuxDoAuthorizeURL + "?" + values.Encode(), nil
 }
 
+// LinuxDo OAuth 的 state 防护：state 改为随机 nonce，回跳地址存服务端内存表并绑定到
+// 浏览器 HttpOnly Cookie。回调时 state 与 Cookie 必须互相匹配且未过期，防止登录 CSRF
+// （攻击者把自己的回调链接发给受害者顶号登录）。单进程内存表即可满足，重启后重新登录。
+type linuxDoOAuthState struct {
+	redirect  string
+	expiresAt time.Time
+}
+
+const (
+	linuxDoOAuthStateTTL   = 10 * time.Minute
+	linuxDoOAuthStateCookie = "canvas_oauth_state"
+)
+
+var (
+	linuxDoOAuthStates   = map[string]linuxDoOAuthState{}
+	linuxDoOAuthStatesMu sync.Mutex
+)
+
+func beginLinuxDoOAuth(w http.ResponseWriter, redirect string) (string, error) {
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return "", err
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	linuxDoOAuthStatesMu.Lock()
+	if len(linuxDoOAuthStates) > 1000 {
+		for key, entry := range linuxDoOAuthStates {
+			if now().After(entry.expiresAt) {
+				delete(linuxDoOAuthStates, key)
+			}
+		}
+	}
+	linuxDoOAuthStates[nonce] = linuxDoOAuthState{redirect: redirect, expiresAt: now().Add(linuxDoOAuthStateTTL)}
+	linuxDoOAuthStatesMu.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name:     linuxDoOAuthStateCookie,
+		Value:    nonce,
+		Path:     "/api/auth/linux-do",
+		MaxAge:   int(linuxDoOAuthStateTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return nonce, nil
+}
+
+func consumeLinuxDoOAuth(r *http.Request, state string) (string, error) {
+	cookie, err := r.Cookie(linuxDoOAuthStateCookie)
+	if err != nil || cookie.Value == "" || cookie.Value != state {
+		return "", safeMessageError{message: "登录状态无效或已过期，请重新发起 Linux.do 登录"}
+	}
+	linuxDoOAuthStatesMu.Lock()
+	entry, ok := linuxDoOAuthStates[state]
+	delete(linuxDoOAuthStates, state)
+	linuxDoOAuthStatesMu.Unlock()
+	if !ok || now().After(entry.expiresAt) {
+		return "", safeMessageError{message: "登录状态无效或已过期，请重新发起 Linux.do 登录"}
+	}
+	return entry.redirect, nil
+}
+
 func LoginWithLinuxDo(r *http.Request, code string, state string) (model.AuthSession, string, error) {
-	redirect := decodeState(state)
+	redirect, err := consumeLinuxDoOAuth(r, state)
+	if err != nil {
+		return model.AuthSession{}, "/", err
+	}
 	settings, err := repository.GetSettings()
 	if err != nil {
 		return model.AuthSession{}, redirect, err

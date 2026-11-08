@@ -33,6 +33,10 @@ type ModelChannel struct {
 
 	ModelCapabilities    map[string]string `json:"modelCapabilities,omitempty"`
 	ParameterTranslation string            `json:"parameterTranslation,omitempty"`
+
+	// Untrusted 标记 baseUrl 来自不可信来源（非管理员用户的本地渠道），
+	// 由服务端在渠道选择时设置，发请求时据此启用内网地址封禁（SSRF 防护）。
+	Untrusted bool `json:"untrusted,omitempty"`
 }
 
 type WorkflowFieldMapping struct {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bufio"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -215,25 +216,29 @@ func ProxyImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	contentType := resp.Header.Get("Content-Type")
-	isImage := strings.HasPrefix(contentType, "image/")
-	var data []byte
-	if isImage {
-		data, err = io.ReadAll(resp.Body)
-		if err != nil {
-			FailWithStatus(w, http.StatusBadGateway, "代理图片请求失败")
-			return
+	// 部分 CDN 不返回 Content-Type，读前 512 字节嗅探真实类型；非图片内容一律拒绝转发，
+	// 响应体限制在 32MB 内，防止一条未鉴权请求把服务端内存打爆。
+	bufferedBody := bufio.NewReader(resp.Body)
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if mediaType == "" {
+		if head, _ := bufferedBody.Peek(512); len(head) > 0 {
+			mediaType = strings.Split(http.DetectContentType(head), ";")[0]
 		}
 	}
-	if contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	} else {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	}
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.WriteHeader(resp.StatusCode)
-	if isImage {
-		_, _ = w.Write(data)
+	if !strings.HasPrefix(mediaType, "image/") {
+		FailWithStatus(w, http.StatusBadGateway, "仅支持代理图片内容")
 		return
 	}
-	_, _ = io.Copy(w, resp.Body)
+	if contentType == "" {
+		contentType = mediaType
+	}
+	data, err := io.ReadAll(io.LimitReader(bufferedBody, 32<<20))
+	if err != nil {
+		FailWithStatus(w, http.StatusBadGateway, "代理图片请求失败")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(data)
 }

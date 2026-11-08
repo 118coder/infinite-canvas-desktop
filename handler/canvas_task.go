@@ -735,7 +735,8 @@ func collectImageCandidates(value any, depth int, includeChatImages bool) []stri
 
 func imageCandidateBytes(value string) ([]byte, string, error) {
 	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
-		response, err := http.Get(value)
+		// 上游响应里的 URL 不可信，统一走 SSRF 防护客户端，避免被引导抓取内网地址。
+		response, err := service.SafeProxyHTTPClient().Get(value)
 		if err != nil {
 			return nil, "", err
 		}

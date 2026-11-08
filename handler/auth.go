@@ -48,7 +48,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 func Login(w http.ResponseWriter, r *http.Request) {
 	var request loginRequest
 	_ = json.NewDecoder(r.Body).Decode(&request)
-	session, err := service.Login(request.Username, request.Password)
+	session, err := service.Login(r, request.Username, request.Password)
 	if err != nil {
 		FailError(w, err)
 		return
@@ -57,7 +57,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func LinuxDoAuthorize(w http.ResponseWriter, r *http.Request) {
-	authURL, err := service.LinuxDoAuthorizeURL(r, r.URL.Query().Get("redirect"))
+	authURL, err := service.LinuxDoAuthorizeURL(w, r, r.URL.Query().Get("redirect"))
 	if err != nil {
 		FailError(w, err)
 		return
@@ -77,7 +77,7 @@ func LinuxDoCallback(w http.ResponseWriter, r *http.Request) {
 func AdminLogin(w http.ResponseWriter, r *http.Request) {
 	var request loginRequest
 	_ = json.NewDecoder(r.Body).Decode(&request)
-	session, err := service.Login(request.Username, request.Password)
+	session, err := service.Login(r, request.Username, request.Password)
 	if err != nil {
 		FailError(w, err)
 		return

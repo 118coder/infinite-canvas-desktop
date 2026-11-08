@@ -2,11 +2,12 @@ package service
 
 import (
 	"log"
+	"os"
 	"sync"
 
+	"github.com/robfig/cron/v3"
 	"github.com/tigerowo/infinite-canvas/model"
 	"github.com/tigerowo/infinite-canvas/repository"
-	"github.com/robfig/cron/v3"
 )
 
 const defaultPromptSyncCron = "0 0 * * *"
@@ -19,7 +20,8 @@ var (
 
 func StartPromptSyncScheduler() {
 	promptSyncOnce.Do(func() {
-		promptSyncCron = cron.New()
+		// cron 作业默认不 recover，panic 会杀死整个进程，这里统一挂上恢复器。
+		promptSyncCron = cron.New(cron.WithChain(cron.Recover(cron.PrintfLogger(log.New(os.Stderr, "[cron] ", log.LstdFlags)))))
 		promptSyncCron.Start()
 	})
 	RefreshPromptSyncScheduler()

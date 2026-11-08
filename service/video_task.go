@@ -197,7 +197,7 @@ func StartVideoTaskPoller(poll VideoTaskPollFunc) {
 	videoTaskPoller = poll
 	videoTaskPollerMu.Unlock()
 	videoTaskPollerOnce.Do(func() {
-		go runVideoTaskPoller()
+		guardPanicLoop("video-task-poller", runVideoTaskPoller)
 	})
 	WakeVideoTaskPoller()
 }
@@ -297,25 +297,27 @@ func runVideoTaskPoller() {
 				}
 				go func(task model.VideoTask) {
 					defer inFlight.Delete(task.ID)
-					poll := currentVideoTaskPoller()
-					if poll == nil {
-						return
-					}
-					ctx, cleanup, err := CanvasTaskContext("video", task.UserID, task.ID)
-					if err != nil {
-						return
-					}
-					defer cleanup()
-					update, err := poll(ctx, task)
-					if ctx.Err() != nil {
-						return
-					}
-					if err != nil {
-						update = VideoTaskPollUpdate{Status: task.Status, ErrorDetail: err.Error()}
-					}
-					if err := UpdateVideoTaskFromPoll(task, update); err != nil {
-						log.Printf("update video task failed id=%s err=%v", task.ID, err)
-					}
+					guardPanic("video-task-poll:"+task.ID, func() {
+						poll := currentVideoTaskPoller()
+						if poll == nil {
+							return
+						}
+						ctx, cleanup, err := CanvasTaskContext("video", task.UserID, task.ID)
+						if err != nil {
+							return
+						}
+						defer cleanup()
+						update, err := poll(ctx, task)
+						if ctx.Err() != nil {
+							return
+						}
+						if err != nil {
+							update = VideoTaskPollUpdate{Status: task.Status, ErrorDetail: err.Error()}
+						}
+						if err := UpdateVideoTaskFromPoll(task, update); err != nil {
+							log.Printf("update video task failed id=%s err=%v", task.ID, err)
+						}
+					})
 				}(task)
 			}
 			for _, task := range workflowTasks {
@@ -325,15 +327,23 @@ func runVideoTaskPoller() {
 				}
 				go func(task repository.RunningHubWorkflowTask) {
 					defer inFlight.Delete("workflow:" + task.ID)
-					kind := strings.SplitN(task.ID, "-", 3)[1]
-					ctx, cleanup, err := CanvasTaskContext(kind, task.UserID, task.ID)
-					if err != nil {
-						return
-					}
-					defer cleanup()
-					if err := pollRunningHubWorkflowTask(ctx, task); err != nil && ctx.Err() == nil {
-						log.Printf("poll RunningHub workflow task failed id=%s err=%v", task.ID, err)
-					}
+					guardPanic("workflow-task-poll:"+task.ID, func() {
+						// 历史/异常数据可能没有 "-" 分隔段，直接取下标会 panic。
+						parts := strings.SplitN(task.ID, "-", 3)
+						if len(parts) < 2 {
+							log.Printf("invalid workflow task id %q, skip polling", task.ID)
+							return
+						}
+						kind := parts[1]
+						ctx, cleanup, err := CanvasTaskContext(kind, task.UserID, task.ID)
+						if err != nil {
+							return
+						}
+						defer cleanup()
+						if err := pollRunningHubWorkflowTask(ctx, task); err != nil && ctx.Err() == nil {
+							log.Printf("poll RunningHub workflow task failed id=%s err=%v", task.ID, err)
+						}
+					})
 				}(task)
 			}
 			waitForNextVideoTaskPoll()

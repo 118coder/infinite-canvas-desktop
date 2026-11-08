@@ -78,7 +78,8 @@ func DraftCreativeWorkflow(ctx context.Context, request WorkflowAgentDraftReques
 	SetModelChannelAuthHeader(httpRequest, channel)
 	httpRequest.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: time.Duration(maxInt(channel.Timeout, 600)) * time.Second}
+	// 统一走渠道客户端工厂：不可信渠道（非管理员本地渠道）自动带 SSRF 防护。
+	client := HTTPClientForChannel(channel)
 	response, err := client.Do(httpRequest)
 	if err != nil {
 		refundCredits()

@@ -31,7 +31,7 @@ var comfyBridgePollWake = make(chan struct{}, 1)
 
 func WakeComfyBridgePoller() {
 	comfyBridgePollerOnce.Do(func() {
-		go runComfyBridgePoller()
+		guardPanicLoop("comfy-bridge-poller", runComfyBridgePoller)
 	})
 	select {
 	case comfyBridgePollWake <- struct{}{}:

@@ -103,6 +103,12 @@ func SelectUserLocalModelChannelForModel(userID string, modelName string, channe
 				break
 			}
 		}
+		// 非管理员用户的本地渠道 baseUrl 不可信，发请求时禁止访问本地/内网地址；
+		// 管理员的渠道视为与系统渠道同信任级别（桌面版本机模型、内网网关等合法场景）。
+		untrusted := true
+		if user, ok, userErr := repository.GetUserByID(userID); userErr == nil && ok && user.Role == model.UserRoleAdmin {
+			untrusted = false
+		}
 		return model.ModelChannel{
 			ID:                   channelID,
 			Protocol:             protocol,
@@ -114,6 +120,7 @@ func SelectUserLocalModelChannelForModel(userID string, modelName string, channe
 			Timeout:              600,
 			Enabled:              true,
 			ParameterTranslation: parameterTranslation,
+			Untrusted:            untrusted,
 		}, nil
 	}
 	return model.ModelChannel{}, errors.New("本地渠道不存在")

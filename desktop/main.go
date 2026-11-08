@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -230,8 +232,9 @@ func listenDesktop() (net.Listener, int) {
 		log.Fatal(err)
 	}
 	actual := listenerPort(listener)
-	writePortFile(actual)
-	log.Printf("固定端口均被占用，改用临时端口 %d：本地存储会与之前的端口分离", actual)
+	// 临时端口绝不能写回端口文件：WebView2 的 IndexedDB / localStorage 按 origin（含端口）隔离，
+	// 写回会让以后每次启动都停在临时端口，用户会看到画布"全没了"。
+	log.Printf("固定端口均被占用，本次改用临时端口 %d；画布数据仍在原端口对应的存储中，关闭占用端口的程序后重启即可恢复", actual)
 	return listener, actual
 }
 
