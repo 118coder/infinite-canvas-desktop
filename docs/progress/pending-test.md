@@ -5,6 +5,74 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+## 前端性能与 UI 一致性（本轮）
+
+### 画布运行时
+
+- 拖拽性能：@提及/配置输入/视频素材/全景/连线引用等 O(N×C) 派生表改按「结构等价」缓存，拖拽每帧只改位置时整帧跳过重建（500 节点拖拽帧率不再随节点数线性劣化）；连线拖拽与节点拖拽同款按帧合并，容器 rect 手势期缓存，不再逐条 mousemove 强制同步布局；删除生成中的节点会中止在途请求与轮询并清理任务表（含裸 nodeId key，此前永不清理随删除累积）
+- 内存：`storageConfigPromise` 失败不再永久缓存（此前开画布瞬间一次网络抖动会让本会话云同步全部静默瘫痪）；同 storageKey 并发解析去重，不再重复 createObjectURL；服务端对象元数据会话级缓存；画布媒体恢复限 6 并发；视频走账号代理时「停止」现在真的会 abort 请求
+- 轮询与监听：后台标签页不再每 5s 轮询画布任务；「停止中」节点每次会话只补发一轮停止请求（此前每 5s 反复重写历史数组）；全屏预览 wheel 监听只在内容形态变化时重挂；预览键盘监听不再随拖拽逐帧拆装；面板拖宽中途卸载会兜底摘掉 document/window 监听
+
+### 全局性能与包体
+
+- 删除 `@ant-design/pro-components`（8MB 依赖，全项目只用了一个 ProConfigProvider），深色主题已由 antd darkAlgorithm 承担；画布列表页按需加载编辑器（列表页不再打包编辑器全家桶）；设置弹窗改为打开时挂载（数据打包/zip/MD5/TTS 语音库不再进每个页面）
+- image/video 工作台：历史画廊/成果网格分页渲染（每页 24 条 + 「加载更多」，生成中卡片不受分页限制），提示词每敲一字的重渲染成本从 O(全部历史) 降为 O(一页)；根组件级 1s 时钟全部下沉到 Pending 卡片自刷新（image/video/工作流三处）
+- 数据工程导出改 fflate 异步压缩，几百 MB 导出不再假死；提示词库封面 `loading="lazy"`；视频卡 `preload="metadata"`
+- 修复一个审计漏掉的水合 bug：image 页工作流悬浮按钮样式里 `typeof window` 分支导致 SSR/客户端首渲染不一致（dev 下 hydration 报错），改为 SSR 安全初值 + 挂载后设置真实位置
+
+### UI 一致性
+
+- 新增 `CanvasErrorBoundary`：节点级边界（单节点数据异常只显示占位卡片 + 重试渲染，不再整页白屏）+ 画布页面级兜底（整页错误卡片可返回/刷新）
+- 画布全局快捷键新增守卫：antd Modal/Drawer 打开时不再触发（此前裁剪弹窗里按 Backspace 会删掉背后的画布节点）、中文输入法组合键期间不触发、全屏预览打开期间由预览组件接管按键
+- 主题：图片悬浮工具条/工具条配置弹窗/主题切换按钮 active 态/快捷键 kbd 键帽全部改用 canvasThemes token（此前硬编码深色/白底，浅色主题下破相）；悬浮工具条按钮 hover/active 同步 token 化，Tooltip 恢复主题自适应
+- 层级：antd `zIndexPopupBase` 提到 2100——Modal/下拉盖过画布页内 popover（此前提示词下拉/设置 popover 反压 Modal），message toast 高于全屏预览不再被吞
+- 细节：六个固定宽度 Modal/Popover 改响应式宽度（<1100px 窗口不再溢出）、运镜面板可横向滚动；`text-stone-500` 全部补 dark 变体；「剪切板」统一为「剪贴板」；视频停止按钮的布尔优先级歧义加括号
+
+### 待人工验证
+
+- 500 节点画布拖拽、跨节点连线、框选、删除生成中节点——重点回归（本轮动了拖拽路径）
+- 浅色主题下悬停图片看工具条配色；弹窗里按 Backspace/Ctrl+Z 不再影响画布；全屏预览时生成完成 toast 可见
+- image/video 页输入提示词打字流畅度；历史多于一页时点「加载更多」；数据工程导出大包不卡界面
+- 云端构建 web-build 通过（pro-components 已从 package.json/bun.lock 移除）
+
+## 画布数据安全与后端加固（本轮）
+
+### 数据丢失防护
+
+- 画布项目保存增加三重兜底：连续操作期间防抖被不断重置时，距上次成功落盘超过 2 秒强制写入一次；`pagehide`/页面隐藏时立即发起未落盘改动的写入（IndexedDB 事务开启后不受页面卸载影响）；写入失败（配额满/隐私模式等）不再静默吞掉，会弹出明确错误提示（30 秒节流）
+- 画布数据读取失败或 JSON 解析失败时进入只读保护：暂停自动保存，防止用空数据覆盖原有项目，并给出常驻告警；刷新页面读取成功后自动恢复保存
+- 桌面版固定端口全部被占用时改用的临时端口不再写回 `desktop-port.txt`：下次启动仍优先尝试原端口，画布数据不会因 origin 漂移出现"全没了"的假象
+
+### CI 与进程稳定
+
+- `desktop` 包加 `//go:build windows` 标签并新增非 Windows 空实现，`go test ./...` 在 Linux CI 上不再因 WebView2 依赖整包失败（go-test 应转绿）
+- 全部常驻后台任务加 panic 防护：视频/工作流轮询逐任务 recover，Comfy Bridge 轮询与视频轮询主循环 panic 后自动重启，两个 cron 挂 `cron.Recover`；上游返回畸形数据不再能杀死整个进程（桌面版表现为闪退）
+- 工作流任务 ID 缺 "-" 分隔段时跳过轮询并记日志，不再数组越界
+
+### 安全加固（主要影响 Docker/公网部署；桌面版本机行为不变）
+
+- 管理员账号若仍在使用默认密码（admin / infinite-canvas），拒绝来自非本机的登录并提示修改；桌面版只绑 127.0.0.1 不受影响；`AllowRegister` 默认改为关闭，需要开放注册的管理员在后台设置里手动打开
+- 非管理员用户的本地渠道 baseUrl 按不可信处理：服务端转发请求时禁止访问 127.0.0.1/内网/云 metadata 地址（复用现成 SSRF 防护拨号）；管理员渠道与桌面版本机模型（如本机 Ollama）不受影响；画布任务抓取上游返回的图片 URL、工作流 agent 草稿同样接入该防护
+- 全部接口增加请求体大小上限（默认 10MB，文件/视频/画布任务等大文件路由 129MB，用户数据与生成日志同步 32MB），未鉴权的登录/注册接口不再能被超大 JSON 打爆内存
+- `/api/proxy-image` 增加 IP 限流（900 次/分钟，大画布恢复的瞬时突发仍可用）、响应体上限 32MB、非图片内容直接拒绝转发
+- LinuxDo OAuth state 改为随机 nonce 并绑定 HttpOnly Cookie，回跳地址存服务端 10 分钟内存表，回调时三者互相校验，阻断登录 CSRF；未登录状态打开他人转发的回调链接会提示状态无效
+
+### 待人工验证
+
+- 连续拖拽画布节点 30 秒后强杀进程，重开画布最多丢失约 2 秒内的编辑（此前是整段会话）
+- 清空浏览器站点数据后编辑画布，应出现"保存失败"提示而不是静默丢失
+- 云端 CI 的 go-test 步骤应变绿；Build Desktop 产物正常
+- Docker 部署用默认密码从外部登录管理员应被拒绝；本机登录后改密恢复正常
+
+## canvas-cli：AI 自动生图 / 审稿命令行（本轮）
+
+- 新增独立命令行工具 `cmd/canvas-cli`（Go 标准库实现，不改动任何现有前后端代码，对画布主模式零影响）：AI agent 可在终端直接完成「生图 → 审稿 → 改稿」循环，配置保存在 `~/.infinite-canvas/canvas-cli.json`（权限 0600），支持环境变量 `CANVAS_CLI_BASE_URL` / `CANVAS_CLI_API_KEY` 临时覆盖
+- 生图支持 OpenAI 兼容（`/v1/images/generations`、带参考图走 `/v1/images/edits`）与 Gemini 原生（`generateContent` + `imageConfig`）两种协议；尺寸/质量折算口径与画布前端一致（比例按质量基准折算 16 倍数像素，Gemini aspectRatio/imageSize 同映射）
+- 产物与审稿记录落盘到 `--out` 目录的 `manifest.json`：`generate` 生图（支持 `--n`、`--ref` 图生图、`--prefix`）、`list` 按 pending/approved/rejected 查询、`review` 记录人工/agent 结论、`auto-review` 调视觉模型按 `--min-score` 分数线自动筛图
+- 全部命令输出 JSON（失败 `{"ok":false,"error"}` 且退出码 1）；使用文档 `docs/canvas/canvas-cli.md`，文档索引已加入口
+- 云端构建同步产出 `canvas-cli.exe`：`desktop-latest` 滚动发行新增该资产，正式版 Release 的 exe/zip 资产与 zip 内目录、启动说明都包含它
+- 待人工验证：`config set/show` 写读与打码正确；配真实渠道后 `generate` 能出图（openai 与 gemini 各一次）、带 `--ref` 图生图可用；`review` / `list` / `auto-review` 对 manifest 的读写正确；云端 Build Desktop 产出的 `canvas-cli.exe` 双击/终端执行 `canvas-cli.exe help` 正常
+
 ## v0.10.0 发版与检查更新（本轮）
 
 - `VERSION` 已升到 `v0.10.0`，正式发行版由 tag `v0.10.0` 触发 Release 工作流产出（exe + `infinite-canvas-v0.10.0-win-x64.zip`），与 `desktop-latest` 滚动包相互独立
