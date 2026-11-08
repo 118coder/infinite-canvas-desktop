@@ -148,7 +148,7 @@ export function CanvasCameraControl({ value, onChange, buttonClassName }: Canvas
 
                           <div className="px-6 py-5">
                               <div className="overflow-x-auto">
-                                  <div className="grid min-w-[840px] grid-cols-4">
+                                  <div className="grid grid-cols-4 overflow-x-auto max-w-[calc(100vw-32px)] min-w-[840px]">
                                       <SettingColumn
                                           theme={theme}
                                           label="相机"

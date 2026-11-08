@@ -28,6 +28,9 @@ export const canvasThemes = {
             itemHover: "#e7e5df",
             activeBg: "#e7e5df",
             activeText: "#292524",
+            // 主题切换按钮的强反差激活态（浅色=黑底白字，与深色的亮底暗字对称）
+            activeStrongBg: "#111111",
+            activeStrongText: "#ffffff",
         },
     },
     dark: {
@@ -56,6 +59,8 @@ export const canvasThemes = {
             itemHover: "#292524",
             activeBg: "#3a3631",
             activeText: "#f5f5f4",
+            activeStrongBg: "#fafaf9",
+            activeStrongText: "#171717",
         },
     },
 } as const;

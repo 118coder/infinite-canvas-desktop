@@ -7,6 +7,7 @@ import { allLodKeys, createImageThumbnail } from "@/lib/image-thumbnail";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/services/anonymous-storage";
 import { apiGet } from "@/services/api/request";
+import type { StorageObjectInfo } from "@/services/api/storage";
 import { comfyOutputStorageKey } from "@/services/api/workflow-generation";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -59,6 +60,10 @@ export type StorageConfig = {
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
 const objectUrls = new Map<string, string>();
+// 同 key 并发去重：复制节点共享 storageKey 时避免重复 createObjectURL 造成泄漏
+const objectUrlRequests = new Map<string, Promise<string>>();
+// 服务端对象元数据会话级缓存（publicUrl/objectKey 不可变），避免恢复大画布时逐节点重复请求
+const storageInfoRequests = new Map<string, Promise<StorageObjectInfo | null>>();
 const previewUrls = new Map<string, { source: string; url: string }>();
 const previewSources = new Map<string, string>();
 const previewRequests = new Map<string, { source: string; promise: Promise<string | undefined> }>();
@@ -527,8 +532,7 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
         if (localUrl) return localUrl;
         const cachedUrl = serverUrls.get(id);
         if (cachedUrl) return cachedUrl;
-        const { getStorageObjectInfo } = await import("@/services/api/storage");
-        const info = await getStorageObjectInfo(id).catch(() => null);
+        const info = await loadStorageObjectInfoCached(id);
         if (!info) return fallback;
         const provider = loadUserStorageProvider();
         if (info.direct && provider?.type === "webdav") {
@@ -550,11 +554,34 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
 async function resolveLocalImageUrl(storageKey: string) {
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
-    const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return "";
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
+    let request = objectUrlRequests.get(storageKey);
+    if (!request) {
+        request = (async () => {
+            const blob = await store.getItem<Blob>(storageKey);
+            if (!blob) return "";
+            const url = URL.createObjectURL(blob);
+            objectUrls.set(storageKey, url);
+            return url;
+        })();
+        objectUrlRequests.set(storageKey, request);
+        request.finally(() => objectUrlRequests.delete(storageKey)).catch(() => undefined);
+    }
+    return request;
+}
+
+// getStorageObjectInfo 失败不缓存（允许重试），成功结果按 id 去重共享
+async function loadStorageObjectInfoCached(id: string): Promise<StorageObjectInfo | null> {
+    let request = storageInfoRequests.get(id);
+    if (!request) {
+        request = import("@/services/api/storage")
+            .then(({ getStorageObjectInfo }) => getStorageObjectInfo(id))
+            .catch(() => null);
+        storageInfoRequests.set(id, request);
+        request.then((info) => {
+            if (!info) storageInfoRequests.delete(id);
+        }).catch(() => undefined);
+    }
+    return request;
 }
 
 async function maybeUploadImageToServer(blob: Blob, tokenOverride?: string): Promise<UploadedImage | null> {
@@ -613,7 +640,11 @@ async function cacheAnonymousImage(uploaded: UploadedImage, blob: Blob) {
 }
 
 export async function loadStorageConfig() {
-    storageConfigPromise ||= apiGet<StorageConfig>("/api/storage/config");
+    // 失败必须清空缓存 promise：否则开画布瞬间一次网络抖动会让本会话的云端同步/上传永久瘫痪
+    storageConfigPromise ||= apiGet<StorageConfig>("/api/storage/config").catch((error) => {
+        storageConfigPromise = null;
+        throw error;
+    });
     return storageConfigPromise;
 }
 

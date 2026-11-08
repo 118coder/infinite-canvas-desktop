@@ -523,11 +523,11 @@ export function AppConfigModal() {
             title={
                 <div>
                     <div className="text-lg font-semibold">配置与用户偏好</div>
-                    <div className="mt-1 text-xs font-normal text-stone-500">模型、渠道和画布默认行为</div>
+                    <div className="mt-1 text-xs font-normal text-stone-500 dark:text-stone-400">模型、渠道和画布默认行为</div>
                 </div>
             }
             open={isConfigOpen}
-            width={960}
+            width="min(960px, 94vw)"
             centered
             onCancel={() => setConfigDialogOpen(false)}
             styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 18 } }}
@@ -560,7 +560,7 @@ export function AppConfigModal() {
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
                                         <div className="text-sm font-medium">本地模型渠道</div>
-                                        <div className="mt-1 text-xs text-stone-500">可为生图、视频、文本、音频分别选择不同渠道的模型。</div>
+                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">可为生图、视频、文本、音频分别选择不同渠道的模型。</div>
                                     </div>
                                     <Button size="small" onClick={addLocalChannel}>
                                         新增渠道
@@ -599,14 +599,14 @@ export function AppConfigModal() {
                                                 ) : null}
                                             </div>
                                         </div>
-                                        <div className="text-xs text-stone-500">{isWorkflowProtocol(channel.protocol) ? `已保存 ${channel.workflowSummaries?.length || 0} 条工作流` : `已保存 ${channel.models.length} 个模型`}</div>
+                                        <div className="text-xs text-stone-500 dark:text-stone-400">{isWorkflowProtocol(channel.protocol) ? `已保存 ${channel.workflowSummaries?.length || 0} 条工作流` : `已保存 ${channel.models.length} 个模型`}</div>
                                     </div>
                                 ))}
                             </div>
                             <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-3 py-2 dark:border-stone-800">
                                 <div className="min-w-0">
                                     <div className="text-sm font-medium">模型列表</div>
-                                    <div className="mt-1 text-xs text-stone-500">当前已保存 {config.models.length} 个模型</div>
+                                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">当前已保存 {config.models.length} 个模型</div>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                                     <Button size="small" loading={loadingModels} onClick={() => void refreshModels()}>
@@ -616,7 +616,7 @@ export function AppConfigModal() {
                             </div>
                         </>
                     ) : (
-                        <div className="mb-5 rounded-lg border border-stone-200 p-3 text-sm text-stone-500 dark:border-stone-800">
+                        <div className="mb-5 rounded-lg border border-stone-200 p-3 text-sm text-stone-500 dark:text-stone-400 dark:border-stone-800">
                             <div className="font-medium text-stone-900 dark:text-stone-100">云端渠道</div>
                             <div className="mt-1">由系统后台渠道转发请求，当前可用 {modelChannel?.availableModels.length || 0} 个模型。</div>
                         </div>
@@ -680,7 +680,7 @@ export function AppConfigModal() {
                             </Form.Item>
                         ) : null}
                     </div>
-                    <div className="mb-4 rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2 text-xs text-stone-500 dark:border-stone-800 dark:bg-stone-900/50">
+                    <div className="mb-4 rounded-xl border border-stone-200 bg-stone-50/70 px-3 py-2 text-xs text-stone-500 dark:text-stone-400 dark:border-stone-800 dark:bg-stone-900/50">
                         已有内容的节点再次点「生成」时，直接在本节点上重新生成：清空旧内容，只用当前提示词和上游连线参考重新生成，不会另起节点、也不会把旧图当作参考图。想保留旧结果请先「创造副本」（Ctrl / Cmd + D）。
                     </div>
                     <div className="mb-4 grid gap-3 md:grid-cols-4">
@@ -693,7 +693,7 @@ export function AppConfigModal() {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-sm font-medium">数据工程</div>
-                                <div className="mt-1 text-xs text-stone-500">
+                                <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                                     完整包导出画布、素材、渠道配置、本地 Skill、生成历史以及全部图片本体，换机导入即可开箱即用；
                                     引用包只导出画布 JSON + 每张图片的 storageKey / MD5 / 文件名清单，体积几百 KB，图片需要在本机补齐。
                                 </div>
@@ -742,7 +742,7 @@ export function AppConfigModal() {
                                         >
                                             <div className="min-w-0">
                                                 <div className="truncate font-medium">{item.fileName || item.storageKey}</div>
-                                                <div className="mt-0.5 truncate text-[11px] text-stone-500">
+                                                <div className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-stone-400">
                                                     {[item.bytes ? formatBytes(item.bytes) : "", item.md5 ? `MD5 ${item.md5.slice(0, 10)}…` : "", item.titles.length ? `节点：${item.titles.join("、")}` : ""]
                                                         .filter(Boolean)
                                                         .join(" · ")}
@@ -764,7 +764,7 @@ export function AppConfigModal() {
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
                                         <div className="text-sm font-medium">用户 S3/R2 存储</div>
-                                        <div className="mt-1 text-xs text-stone-500">
+                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                                             开启后，新生成图片和媒体文件会优先保存到你的 S3 兼容对象存储。
                                             {storageUsageText ? <>当前容量：{storageUsageText}</> : null}
                                         </div>
@@ -773,7 +773,7 @@ export function AppConfigModal() {
                                         <Button size="small" loading={measuringStorageType === "s3"} onClick={() => void measureStorage(userStorage)}>
                                             统计容量
                                         </Button>
-                                        <span className="text-xs text-stone-500">自动同步</span>
+                                        <span className="text-xs text-stone-500 dark:text-stone-400">自动同步</span>
                                         <Switch size="small" checked={config.syncStorageConfig} onChange={(checked) => updateConfig("syncStorageConfig", checked)} />
                                         <Switch checked={userStorage.enabled} disabled={userWebDAVStorage.enabled} onChange={(enabled) => setUserStorage((value) => ({ ...value, enabled }))} />
                                     </div>
@@ -795,7 +795,7 @@ export function AppConfigModal() {
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
                                         <div className="text-sm font-medium">WebDAV 存储</div>
-                                        <div className="mt-1 text-xs text-stone-500">
+                                        <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                                             开启后，新生成图片和媒体文件会优先保存到你的 WebDAV。
                                             {webDAVStorageUsageText ? <>当前容量：{webDAVStorageUsageText}</> : null}
                                         </div>
@@ -804,7 +804,7 @@ export function AppConfigModal() {
                                         <Button size="small" loading={measuringStorageType === "webdav"} onClick={() => void measureStorage(userWebDAVStorage)}>
                                             统计容量
                                         </Button>
-                                        <span className="text-xs text-stone-500">自动同步</span>
+                                        <span className="text-xs text-stone-500 dark:text-stone-400">自动同步</span>
                                         <Switch size="small" checked={config.syncWebDAVStorageConfig} onChange={(checked) => updateConfig("syncWebDAVStorageConfig", checked)} />
                                         <Switch checked={userWebDAVStorage.enabled} disabled={userStorage.enabled} onChange={(enabled) => setUserWebDAVStorage((value) => ({ ...value, enabled }))} />
                                     </div>
@@ -863,7 +863,7 @@ function FeatureSwitch({ title, description, checked, onChange }: { title: strin
                 <div className="text-sm font-medium">{title}</div>
                 <Switch checked={checked} onChange={onChange} />
             </div>
-            <div className="mt-1 text-xs leading-5 text-stone-500">{description}</div>
+            <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{description}</div>
         </div>
     );
 }

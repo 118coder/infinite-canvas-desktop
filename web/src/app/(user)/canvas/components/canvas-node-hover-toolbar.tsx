@@ -91,6 +91,7 @@ export function CanvasNodeHoverToolbar({
     const { message } = App.useApp();
     const copyText = useCopyText();
     const viewport = useCommittedViewport();
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const toolbarRef = useRef<HTMLDivElement>(null);
     const isPanorama = isPanoramaNodeType(node?.type);
     const quickToolsStorageKey = isPanorama ? PANORAMA_QUICK_TOOLS_STORAGE_KEY : IMAGE_QUICK_TOOLS_STORAGE_KEY;
@@ -236,8 +237,8 @@ export function CanvasNodeHoverToolbar({
         <>
             <div
                 ref={toolbarRef}
-                className="absolute z-[70] flex flex-wrap -translate-x-1/2 -translate-y-full items-center justify-center gap-x-2 overflow-visible rounded-xl border border-white/10 bg-[#242424] px-2 text-[13px] text-[#f3f3f3] shadow-[0_8px_28px_rgba(0,0,0,.28)]"
-                style={{ left, top, maxWidth: "min(800px, calc(100vw - 32px))" }}
+                className="absolute z-[70] flex flex-wrap -translate-x-1/2 -translate-y-full items-center justify-center gap-x-2 overflow-visible rounded-xl border px-2 text-[13px] shadow-[0_8px_28px_rgba(0,0,0,.28)]"
+                style={{ left, top, maxWidth: "min(800px, calc(100vw - 32px))", background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -338,11 +339,15 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
 }
 
 function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const hasText = showLabel && Boolean(label);
     return (
-        <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff">
-            <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
-                <span className={`flex h-8 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-white/10 ${active ? "bg-white/10" : ""}`}>
+        <Tooltip title={title} placement="top" mouseEnterDelay={0.2}>
+            <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap ${danger ? "text-red-500" : ""}`} onClick={onClick} aria-label={title}>
+                <span
+                    className={`flex h-8 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[var(--toolbar-hover)] ${active ? "bg-[var(--toolbar-hover)]" : ""}`}
+                    style={{ ["--toolbar-hover" as string]: theme.toolbar.itemHover }}
+                >
                     {icon}
                     {hasText ? <span>{label}</span> : null}
                 </span>

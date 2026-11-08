@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
@@ -8,13 +9,15 @@ import { Download, FileUp, Plus } from "lucide-react";
 import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
-import CanvasClientPage from "./[id]/canvas-client-page";
 import { CanvasDeleteProjectsDialog } from "./components/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "./components/canvas-project-card";
 import type { CanvasExportFile } from "./export-types";
 import { useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "./utils/canvas-export";
+
+// 画布编辑器体量很大（连带上百个依赖模块），列表页只有 ?project= 时才需要它，按需拆包加载
+const CanvasClientPage = dynamic(() => import("./[id]/canvas-client-page"), { ssr: false, loading: () => <main className="h-full bg-background" /> });
 
 // 画布入口：列表和编辑器共用 /canvas 路由，打开的画布通过 ?project=<id> 传递，
 // 静态导出（桌面版）与常规部署使用同一套路由结构。
@@ -87,7 +90,7 @@ function CanvasProjectsList() {
             <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-10">
                 <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-6 dark:border-stone-800">
                     <div>
-                        <p className="text-xs text-stone-500">画布库</p>
+                        <p className="text-xs text-stone-500 dark:text-stone-400">画布库</p>
                         <h1 className="mt-3 text-3xl font-semibold">无限画布</h1>
                     </div>
                     <div className="flex items-center gap-2">
@@ -116,7 +119,7 @@ function CanvasProjectsList() {
                 </header>
 
                 {!hydrated ? (
-                    <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
+                    <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:text-stone-400 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                         {projects.map((project) => (
@@ -126,7 +129,7 @@ function CanvasProjectsList() {
                 ) : (
                     <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-stone-200 text-center dark:border-stone-800">
                         <h2 className="text-xl font-medium">还没有画布</h2>
-                        <p className="mt-3 text-sm text-stone-500">新建一个画布后，就可以独立保存节点、连线和画布外观。</p>
+                        <p className="mt-3 text-sm text-stone-500 dark:text-stone-400">新建一个画布后，就可以独立保存节点、连线和画布外观。</p>
                         <Button type="primary" className="mt-6" icon={<Plus className="size-4" />} onClick={createAndEnter}>
                             新建画布
                         </Button>

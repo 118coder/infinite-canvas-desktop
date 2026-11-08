@@ -28,7 +28,7 @@ export function CanvasNodeAngleDialog({ dataUrl, open, onClose, onConfirm }: { d
     const update = <Key extends keyof CanvasImageAngleParams>(key: Key, value: CanvasImageAngleParams[Key]) => setParams((current) => ({ ...current, [key]: value }));
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={860} centered destroyOnHidden>
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width="min(860px, 94vw)" centered destroyOnHidden>
             <div className="space-y-5">
                 <div>
                     <h2 className="text-xl font-semibold">AI 多角度</h2>

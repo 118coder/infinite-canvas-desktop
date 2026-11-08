@@ -35,6 +35,8 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { parseWorkflowRef, type WorkflowRef } from "@/lib/workflow-channel";
 
 const cogVideoX3DurationOptions = COGVIDEOX3_DURATIONS.map((value) => ({ value, label: `${value}s` }));
+// 成果网格每页渲染条数（pending 结果不受分页限制，始终显示）
+const RESULT_PAGE_SIZE = 24;
 
 type GeneratedVideo = {
     id: string;
@@ -149,7 +151,6 @@ export default function VideoPage() {
     const [assetPickerTarget, setAssetPickerTarget] = useState<AssetPickerTarget>("general");
     const [elementPickerIndex, setElementPickerIndex] = useState(0);
     const [elementUploadIndex, setElementUploadIndex] = useState(0);
-    const [now, setNow] = useState(Date.now());
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -208,11 +209,7 @@ export default function VideoPage() {
         });
     };
 
-    useEffect(() => {
-        if (!pendingCount && !hasPendingLogs) return;
-        const timer = window.setInterval(() => setNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
-    }, [pendingCount, hasPendingLogs]);
+    // 生成中的耗时展示由 PendingVideoCard 自己每秒刷新，不再用根组件级 1s 时钟整页重渲染
 
     useEffect(() => {
         logsRef.current = logs;
@@ -266,13 +263,13 @@ export default function VideoPage() {
         try {
             const text = (await navigator.clipboard.readText()).trim();
             if (!text) {
-                message.error("剪切板里没有可读取的文本");
+                message.error("剪贴板里没有可读取的文本");
                 return;
             }
             setPrompt(text);
-            message.success("已读取剪切板文本");
+            message.success("已读取剪贴板文本");
         } catch {
-            message.error("剪切板里没有可读取的文本");
+            message.error("剪贴板里没有可读取的文本");
         }
     };
 
@@ -449,7 +446,7 @@ export default function VideoPage() {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
             if (!blobs.length) {
-                message.error("剪切板里没有可读取的图片");
+                message.error("剪贴板里没有可读取的图片");
                 return;
             }
             const nextReferences = await Promise.all(
@@ -461,7 +458,7 @@ export default function VideoPage() {
             setReferences((value) => [...value, ...nextReferences].slice(0, referenceImageLimit));
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
-            message.error("剪切板里没有可读取的图片");
+            message.error("剪贴板里没有可读取的图片");
         }
     };
 
@@ -471,7 +468,7 @@ export default function VideoPage() {
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
             const blob = blobs[0];
             if (!blob) {
-                message.error("剪切板里没有可读取的图片");
+                message.error("剪贴板里没有可读取的图片");
                 return;
             }
             if (blob.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes) {
@@ -488,7 +485,7 @@ export default function VideoPage() {
                 hideLoading();
             }
         } catch {
-            message.error("剪切板里没有可读取的图片");
+            message.error("剪贴板里没有可读取的图片");
         }
     };
 
@@ -497,7 +494,7 @@ export default function VideoPage() {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("video/")).map((type) => item.getType(type))));
             if (!blobs.length) {
-                message.error("剪切板里没有可读取的视频");
+                message.error("剪贴板里没有可读取的视频");
                 return;
             }
             const usable = blobs.filter((blob) => blob.size <= referenceLimits.videoMaxBytes).slice(0, Math.max(0, videoReferenceLimit - videoReferences.length));
@@ -511,7 +508,7 @@ export default function VideoPage() {
             setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, videoReferenceLimit));
             message.success(`已读取 ${nextVideoReferences.length} 个参考视频`);
         } catch {
-            message.error("剪切板里没有可读取的视频");
+            message.error("剪贴板里没有可读取的视频");
         }
     };
 
@@ -520,7 +517,7 @@ export default function VideoPage() {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("audio/")).map((type) => item.getType(type))));
             if (!blobs.length) {
-                message.error("剪切板里没有可读取的音频");
+                message.error("剪贴板里没有可读取的音频");
                 return;
             }
             const usable = blobs.filter((blob) => blob.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, referenceLimits.audios - audioReferences.length);
@@ -533,7 +530,7 @@ export default function VideoPage() {
             setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, referenceLimits.audios));
             message.success(`已读取 ${nextAudioReferences.length} 个参考音频`);
         } catch {
-            message.error("剪切板里没有可读取的音频");
+            message.error("剪贴板里没有可读取的音频");
         }
     };
 
@@ -664,7 +661,6 @@ export default function VideoPage() {
         const active = () => !snapshot.workflowRef || useUserStore.getState().token === workflowToken;
         setRunning(true);
         setPreviewLog(null);
-        setNow(Date.now());
         const pendingLogs = Array.from({ length: snapshot.taskCount }, (): GenerationLog => {
             const clientTaskId = `client_video_task_${nanoid()}`;
             const task: VideoResponse = { id: clientTaskId, task_id: clientTaskId, model: snapshot.model, status: "queued", progress: 0, created_at: Date.now(), size: snapshot.config.size, seconds: snapshot.config.videoSeconds };
@@ -1309,7 +1305,6 @@ export default function VideoPage() {
                             results={results}
                             logs={logs}
                             pendingCount={pendingCount}
-                            now={now}
                             selectedLogIds={selectedLogIds}
                             activeLogId={previewLog?.id}
                             onSelectedLogIdsChange={setSelectedLogIds}
@@ -1339,7 +1334,6 @@ export default function VideoPage() {
                             results={results}
                             logs={logs}
                             pendingCount={pendingCount}
-                            now={now}
                             selectedLogIds={selectedLogIds}
                             activeLogId={previewLog?.id}
                             onSelectedLogIdsChange={setSelectedLogIds}
@@ -1664,7 +1658,7 @@ function WorkbenchPanel({
                 <WorkbenchSection title="参考图" count={references.length}>
                     <div className="space-y-2">
                         <div className="flex flex-wrap gap-1">
-                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences}>剪切板</Button>
+                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences}>剪贴板</Button>
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onOpenAssetPicker("image")}>从我的素材选择</Button>
                         </div>
@@ -1847,7 +1841,7 @@ function ReferenceQuickActions({ imageCount, videoCount, audioCount, onPasteRefe
     return (
         <div className="flex h-11 items-center gap-1 rounded-xl border border-stone-200 bg-background px-2 dark:border-stone-800">
             {imageCount || videoCount || audioCount ? <span className="min-w-7 text-xs text-stone-500">{imageCount + videoCount + audioCount} 个</span> : null}
-            <Button title="读取剪切板" size="small" type="text" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences} />
+            <Button title="读取剪贴板" size="small" type="text" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences} />
             <Button title="上传参考素材" size="small" type="text" icon={<Upload className="size-3.5" />} onClick={onUploadReferences} />
         </div>
     );
@@ -1956,7 +1950,6 @@ function ResultsPanel({
     results,
     logs,
     pendingCount,
-    now,
     selectedLogIds,
     activeLogId,
     onSelectedLogIdsChange,
@@ -1979,7 +1972,6 @@ function ResultsPanel({
     results: GenerationResult[];
     logs: GenerationLog[];
     pendingCount: number;
-    now: number;
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
@@ -2002,6 +1994,25 @@ function ResultsPanel({
     const liveResultKeys = new Set(visibleResults.flatMap(videoResultIdentityKeys));
     const liveLogIds = new Set(visibleResults.flatMap((result) => [result.taskLogId, result.id]).filter((id): id is string => Boolean(id)));
     const visibleLogs = logs.filter((log) => !liveLogIds.has(log.id) && !videoLogIdentityKeys(log).some((key) => liveResultKeys.has(key)));
+    // 成果卡很重（video/Image + 多交互件），分页渲染；pending 结果不受限制，始终显示。
+    // 保留原始下标：onSyncResult 等回调按 index 定位，不能用切片后的新下标。
+    const [visibleResultLimit, setVisibleResultLimit] = useState(RESULT_PAGE_SIZE);
+    useEffect(() => {
+        setVisibleResultLimit(RESULT_PAGE_SIZE);
+    }, [pendingCount]);
+    let settledBudget = visibleResultLimit;
+    const shownResults: Array<{ result: GenerationResult; index: number }> = [];
+    visibleResults.forEach((result, index) => {
+        if (result.status !== "success" && result.status !== "failed") {
+            shownResults.push({ result, index });
+            return;
+        }
+        if (settledBudget > 0) {
+            settledBudget--;
+            shownResults.push({ result, index });
+        }
+    });
+    const hiddenSettledCount = visibleResults.length - shownResults.length;
     const totalCount = visibleResults.length + visibleLogs.length;
     const allSelected = Boolean(visibleLogs.length) && visibleLogs.every((log) => selectedLogIds.includes(log.id));
     const selectedVideos = visibleLogs.flatMap((log) => selectedLogIds.includes(log.id) && log.video ? [log.video] : []);
@@ -2024,12 +2035,21 @@ function ResultsPanel({
                 </div>
             </div>
             {totalCount ? (
-                <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                    {visibleResults.map((result, index) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} result={result} video={result.video} index={index} syncing={syncingVideoIds.includes(result.video.id)} onCopyPrompt={onCopyPrompt} onDownload={onDownload} onSync={(video) => onSyncResult(result.id, video, index)} onSaveAsset={onSaveAsset} /> : result.status === "failed" ? <FailedVideoCard key={result.id} result={result} error={result.error || "生成失败"} onCopyPrompt={onCopyPrompt} onPreview={() => onPreviewResult(result)} onRetry={() => onRetryResult(result)} /> : <PendingVideoCard key={result.id} result={result} now={now} onCopyPrompt={onCopyPrompt} onStop={() => onStopResult(result)} onRetry={() => onRetryResult(result)} onDelete={() => { const log = logs.find((item) => item.id === (result.taskLogId || result.id)); if (log) onDeleteLog(log); }} />))}
+                <>
+                    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                    {shownResults.map(({ result, index }) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} result={result} video={result.video} index={index} syncing={syncingVideoIds.includes(result.video.id)} onCopyPrompt={onCopyPrompt} onDownload={onDownload} onSync={(video) => onSyncResult(result.id, video, index)} onSaveAsset={onSaveAsset} /> : result.status === "failed" ? <FailedVideoCard key={result.id} result={result} error={result.error || "生成失败"} onCopyPrompt={onCopyPrompt} onPreview={() => onPreviewResult(result)} onRetry={() => onRetryResult(result)} /> : <PendingVideoCard key={result.id} result={result} onCopyPrompt={onCopyPrompt} onStop={() => onStopResult(result)} onRetry={() => onRetryResult(result)} onDelete={() => { const log = logs.find((item) => item.id === (result.taskLogId || result.id)); if (log) onDeleteLog(log); }} />))}
                     {visibleLogs.map((log, index) => (
                         <HistoryLogCard key={log.id} log={log} index={index} selected={selectedLogIds.includes(log.id)} active={activeLogId === log.id} syncing={Boolean(log.video && syncingVideoIds.includes(log.video.id))} onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))} onDelete={() => onDeleteLog(log)} onPreview={() => onPreviewLog(log)} onRetry={() => onRetryLog(log)} onCopyPrompt={onCopyPrompt} onDownload={onDownload} onSync={(video) => onSyncLog(log, video, index)} onSaveAsset={onSaveAsset} />
                     ))}
-                </div>
+                    </div>
+                    {hiddenSettledCount > 0 ? (
+                        <div className="flex justify-center pt-3">
+                            <Button size="small" onClick={() => setVisibleResultLimit((current) => current + RESULT_PAGE_SIZE)}>
+                                加载更多成果（还有 {hiddenSettledCount} 条）
+                            </Button>
+                        </div>
+                    ) : null}
+                </>
             ) : (
                 <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
                     <VideoIcon className="mb-4 size-11 text-stone-400" />
@@ -2053,7 +2073,7 @@ function ResultVideoCard({ result, video, index, syncing, onCopyPrompt, onDownlo
                     <Tag className="m-0 text-[10px]" color="blue">成功</Tag>
                 </div>
                 <ReferenceThumbnailOverlay references={result.references} className="left-1.5 top-1.5" />
-                <video src={video.url} controls className="size-full object-contain" />
+                <video src={video.url} controls preload="metadata" className="size-full object-contain" />
             </div>
             <TaskInfo item={result} onCopyPrompt={onCopyPrompt} />
             <VideoMetaBar video={video} index={index} syncing={syncing} onDownload={onDownload} onSync={onSync} onSaveAsset={onSaveAsset} />
@@ -2061,7 +2081,12 @@ function ResultVideoCard({ result, video, index, syncing, onCopyPrompt, onDownlo
     );
 }
 
-function PendingVideoCard({ result, now, onCopyPrompt, onStop, onRetry, onDelete }: { result: GenerationResult; now: number; onCopyPrompt: (text: string) => void | Promise<void>; onStop: () => void; onRetry: () => void; onDelete: () => void }) {
+function PendingVideoCard({ result, onCopyPrompt, onStop, onRetry, onDelete }: { result: GenerationResult; onCopyPrompt: (text: string) => void | Promise<void>; onStop: () => void; onRetry: () => void; onDelete: () => void }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
     const progress = typeof result.progress === "number" ? Math.max(0, Math.min(100, Math.floor(result.progress))) : null;
     const stopping = result.status === "stopping";
     const stopped = result.status === "stopped";
@@ -2090,7 +2115,7 @@ function PendingVideoCard({ result, now, onCopyPrompt, onStop, onRetry, onDelete
                         </div>
                     </div>
                 ) : null}
-                {stopped || stopping && result.error ? <Button size="small" type="text" danger title="删除" className="!absolute right-1.5 top-1.5 z-10 !h-6 !w-6 !p-0" icon={<Trash2 className="size-3.5" />} onClick={onDelete} /> : null}
+                {(stopped || (stopping && result.error)) ? <Button size="small" type="text" danger title="删除" className="!absolute right-1.5 top-1.5 z-10 !h-6 !w-6 !p-0" icon={<Trash2 className="size-3.5" />} onClick={onDelete} /> : null}
             </div>
             <TaskInfo item={{ ...result, durationMs }} onCopyPrompt={onCopyPrompt} />
         </div>
@@ -2139,7 +2164,7 @@ function HistoryLogCard({ log, index, selected, active, syncing, onSelectedChang
                     {log.video ? <VideoSourceTag video={log.video} /> : null}
                     <Tag className="m-0 text-[10px]" color={log.status === "成功" ? "blue" : log.status === "生成中" || log.status === "停止中" ? "processing" : log.status === "已停止" ? undefined : "red"}>{log.status}</Tag>
                 </div>
-                {log.video ? <video src={log.video.url} controls className="size-full bg-black object-contain" /> : log.status === "已停止" ? <div className="flex size-full flex-col items-center justify-center gap-2 text-sm"><Square className="size-7" /><span>已停止</span></div> : <div className="flex size-full flex-col items-center justify-center gap-2 p-5 text-center text-sm text-red-500"><AlertCircle className="size-7" /><span>{log.error || "没有可显示的视频"}</span></div>}
+                {log.video ? <video src={log.video.url} controls preload="metadata" className="size-full bg-black object-contain" /> : log.status === "已停止" ? <div className="flex size-full flex-col items-center justify-center gap-2 text-sm"><Square className="size-7" /><span>已停止</span></div> : <div className="flex size-full flex-col items-center justify-center gap-2 p-5 text-center text-sm text-red-500"><AlertCircle className="size-7" /><span>{log.error || "没有可显示的视频"}</span></div>}
                 <ReferenceThumbnailOverlay references={log.references} className="bottom-1.5 right-1.5" />
             </div>
             <div className="space-y-2 border-t border-stone-200 p-2.5 text-xs dark:border-stone-800">

@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/services/anonymous-storage";
 import { apiGet } from "@/services/api/request";
+import type { StorageObjectInfo } from "@/services/api/storage";
 import { autoSyncToCloud, canUseGlobalStorage, clearAutoSyncCache, getProxyUrl, loadUserStorageProvider, toProviderPayload, type StorageConfig, type UserWebDAVStorageProvider } from "@/services/image-storage";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -12,7 +13,25 @@ export type UploadedFile = { url: string; storageKey: string; bytes: number; mim
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const objectUrls = new Map<string, string>();
+// 同 key 并发去重，避免重复 createObjectURL 泄漏
+const objectUrlRequests = new Map<string, Promise<string>>();
+// 服务端对象元数据会话级缓存，失败不缓存允许重试
+const storageInfoRequests = new Map<string, Promise<StorageObjectInfo | null>>();
 let storageConfigPromise: Promise<StorageConfig> | null = null;
+
+async function loadStorageObjectInfoCached(id: string): Promise<StorageObjectInfo | null> {
+    let request = storageInfoRequests.get(id);
+    if (!request) {
+        request = import("@/services/api/storage")
+            .then(({ getStorageObjectInfo }) => getStorageObjectInfo(id))
+            .catch(() => null);
+        storageInfoRequests.set(id, request);
+        request.then((info) => {
+            if (!info) storageInfoRequests.delete(id);
+        }).catch(() => undefined);
+    }
+    return request;
+}
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file", syncId?: string, tokenOverride?: string): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
@@ -107,7 +126,11 @@ async function cacheAnonymousMedia(uploaded: UploadedFile, blob: Blob) {
 }
 
 async function loadStorageConfig() {
-    storageConfigPromise ||= apiGet<StorageConfig>("/api/storage/config");
+    // 失败必须清空缓存 promise：否则一次网络抖动会让本会话的云端同步/上传永久瘫痪
+    storageConfigPromise ||= apiGet<StorageConfig>("/api/storage/config").catch((error) => {
+        storageConfigPromise = null;
+        throw error;
+    });
     return storageConfigPromise;
 }
 
@@ -123,6 +146,16 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
+    let request = objectUrlRequests.get(storageKey);
+    if (!request) {
+        request = resolveMediaUrlUncached(storageKey, fallback);
+        objectUrlRequests.set(storageKey, request);
+        request.finally(() => objectUrlRequests.delete(storageKey)).catch(() => undefined);
+    }
+    return request;
+}
+
+async function resolveMediaUrlUncached(storageKey: string, fallback: string) {
     const blob = await store.getItem<Blob>(storageKey).catch(() => null);
     if (blob) {
         const url = URL.createObjectURL(blob);
@@ -138,8 +171,7 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (storageKey.startsWith("server:")) {
         const id = storageKey.slice("server:".length);
         if (fallback && !fallback.startsWith("blob:") && !fallback.includes("direct=1") && !fallback.startsWith("/webdav-media/")) return fallback;
-        const { getStorageObjectInfo } = await import("@/services/api/storage");
-        const info = await getStorageObjectInfo(id).catch(() => null);
+        const info = await loadStorageObjectInfoCached(id);
         if (!info) return fallback;
         const provider = loadUserStorageProvider();
         if (info.direct && provider?.type === "webdav") {

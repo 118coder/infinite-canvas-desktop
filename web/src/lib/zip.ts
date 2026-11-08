@@ -1,4 +1,4 @@
-import { unzip, zipSync } from "fflate";
+import { unzip, zip } from "fflate";
 
 type ZipFile = {
     name: string;
@@ -14,7 +14,14 @@ export async function createZip(files: ZipFile[]) {
             return [file.name, data] as const;
         }),
     );
-    return new Blob([zipSync(Object.fromEntries(entries), { level: 0 })], { type: "application/zip" });
+    // 与 readZip 同理用异步压缩：几百 MB 媒体导出时 zipSync 会把主线程按住数秒，界面假死
+    const zipped = await new Promise<Uint8Array>((resolve, reject) => {
+        zip(Object.fromEntries(entries), { level: 0 }, (error, data) => {
+            if (error) reject(error);
+            else resolve(data);
+        });
+    });
+    return new Blob([new Uint8Array(zipped)], { type: "application/zip" });
 }
 
 // 读取 zip：改用 fflate 的异步解压，避免几十 MB 包在主线程上一次性同步解压导致界面假死

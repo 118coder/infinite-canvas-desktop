@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Globe2, Home, ImageIcon, Images, Keyboard, Layers3, List, Menu, Bot, Music2, PanelLeftClose, PanelLeftOpen, Pause, Play, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
+import { AlertTriangle, Globe2, Home, ImageIcon, Images, Keyboard, Layers3, List, Menu, Bot, Music2, PanelLeftClose, PanelLeftOpen, Pause, Play, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { stopCanvasTask } from "@/services/api/canvas-tasks";
@@ -49,6 +49,7 @@ import { isKIESeedreamLayerDecompositionModel } from "@/lib/kie-models";
 import { IMAGE_MASK_EDIT_PROMPT_PREFIX } from "@/lib/image-reference-prompt";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { CanvasStage } from "../components/canvas-stage";
+import { CanvasErrorBoundary } from "../components/canvas-error-boundary";
 import { isHiddenBatchChild } from "../utils/canvas-batch-visibility";
 import { INITIAL_VIEWPORT, viewportStore } from "../stores/use-viewport-store";
 import { loadViewport, scheduleViewportSave } from "../utils/canvas-viewport-storage";
@@ -200,8 +201,43 @@ function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: C
     return initialSize && metadata?.size === undefined ? applyNodeConfigPatch(node, { size: initialSize }) : node;
 }
 
+// 结构等价：比较除 position 外的全部字段（拖拽每帧只改 position）。
+// metadata 用引用比较——拖拽映射用 {...node, position} 展开，metadata 引用保持不变。
+function isNodesStructureEqual(a: CanvasNodeData[], b: CanvasNodeData[]) {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const x = a[i];
+        const y = b[i];
+        if (x === y) continue;
+        if (x.id !== y.id || x.type !== y.type || x.title !== y.title || x.width !== y.width || x.height !== y.height) return false;
+        if (x.metadata !== y.metadata) return false;
+    }
+    return true;
+}
+
 export default function CanvasPage({ projectId }: { projectId: string }) {
-    return <InfiniteCanvasPage key={projectId} projectId={projectId} />;
+    return (
+        <CanvasErrorBoundary label="画布页面" fallback={<CanvasPageErrorFallback />}>
+            <InfiniteCanvasPage key={projectId} projectId={projectId} />
+        </CanvasErrorBoundary>
+    );
+}
+
+// 页面级兜底：异常数据把画布渲染打崩时，至少给出可操作的整页错误卡片，而不是白屏
+function CanvasPageErrorFallback() {
+    const router = useRouter();
+    return (
+        <main className="flex h-full flex-col items-center justify-center gap-3 bg-background p-8 text-center">
+            <AlertTriangle className="size-8 text-red-500" />
+            <div className="text-lg font-medium">画布页面渲染失败</div>
+            <p className="max-w-md text-sm text-stone-500 dark:text-stone-400">画布数据中可能存在异常内容。画布文件本身未受影响，可返回列表后重试，或刷新页面。</p>
+            <div className="flex gap-2">
+                <Button onClick={() => router.push("/canvas")}>返回画布列表</Button>
+                <Button type="primary" onClick={() => window.location.reload()}>刷新重试</Button>
+            </div>
+        </main>
+    );
 }
 
 function CanvasRefreshShell() {
@@ -354,6 +390,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const didInitialCenterRef = useRef(false);
     const viewportRestoredRef = useRef(false);
     const rafRef = useRef<number | null>(null);
+    // 连线拖拽按帧合并用；手势期间视口不变，容器 rect 一次性缓存避免逐事件强制同步布局
+    const connectionFrameRef = useRef<number | null>(null);
+    const pendingConnectionMoveRef = useRef<{ x: number; y: number } | null>(null);
+    const connectionGestureRectRef = useRef<DOMRect | null>(null);
     const uploadingMediaNodeIdsRef = useRef(new Set<string>());
     const uploadingImageNodeIdsRef = useRef(new Set<string>());
     const nodeDraggingRef = useRef(false);
@@ -496,6 +536,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const pollingVideoNodeIdsRef = useRef(new Map<string, AbortController>());
     const pollingImageNodeIdsRef = useRef(new Map<string, AbortController>());
     const pollingAudioNodeIdsRef = useRef(new Map<string, AbortController>());
+    // 本次会话已发送过停止请求的节点：轮询器对 stopping 节点只补发一次，不反复重写历史
+    const stopAttemptsRef = useRef(new Set<string>());
     // 任务状态连续查询失败次数：达到阈值就把节点标成失败，避免永远卡在"生成中"
     const taskPollFailuresRef = useRef(new Map<string, number>());
 
@@ -634,13 +676,16 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 n.metadata?.content
         );
     }, [nodes]);
+    // 键盘 effect 只订阅 previewNodeId：拖拽期间 nodes 每帧变化，不能作为依赖反复拆装监听
+    const batchGroupNodesRef = useRef(getBatchGroupNodes);
+    batchGroupNodesRef.current = getBatchGroupNodes;
 
     useEffect(() => {
         if (!previewNodeId) return;
         const handlePreviewKeyDown = (event: KeyboardEvent) => {
             const pn = previewNodeId ? nodesRef.current.find((n) => n.id === previewNodeId) : null;
             if (!pn) return;
-            const group = getBatchGroupNodes(pn);
+            const group = batchGroupNodesRef.current(pn);
             if (group.length <= 1) {
                 if (event.key === "Escape") { event.preventDefault(); setPreviewNodeId(null); }
                 return;
@@ -652,7 +697,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         };
         window.addEventListener("keydown", handlePreviewKeyDown);
         return () => window.removeEventListener("keydown", handlePreviewKeyDown);
-    }, [previewNodeId, getBatchGroupNodes]);
+    }, [previewNodeId]);
 
     useEffect(() => () => {
         const storageKeys = historyCleanupKeysRef.current;
@@ -806,8 +851,14 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 collectImageStorageKeys([dropped, Array.from(nodeTaskRunsRef.current.values())], new Set(), undefined, historyCleanupKeysRef.current).forEach((key) => historyCleanupKeysRef.current.set(key, key));
                 const retainedNodes = [...current.nodes, ...last.nodes, ...historyRef.current.past.slice(-9).flatMap((entry) => entry.nodes)];
                 const retainedRuns = new Set(retainedNodes.map((node) => `${node.id}:${node.metadata?.clientTaskId || ""}`));
+                const retainedNodeIds = new Set(retainedNodes.map((node) => node.id));
                 nodeTaskRunsRef.current.forEach((run, key) => {
-                    if (key.includes(":") && !retainedRuns.has(key)) { delete run.task; delete run.mediaSize; nodeTaskRunsRef.current.delete(key); }
+                    if (key.includes(":")) {
+                        if (!retainedRuns.has(key)) { delete run.task; delete run.mediaSize; nodeTaskRunsRef.current.delete(key); }
+                        return;
+                    }
+                    // 裸 nodeId key：节点已不在任何保留快照里时同样清理（此前永不清理，随删除累积泄漏）
+                    if (!retainedNodeIds.has(key)) { delete run.task; delete run.mediaSize; nodeTaskRunsRef.current.delete(key); }
                 });
             }
             historyRef.current.past = [...historyRef.current.past.slice(-9), last];
@@ -850,7 +901,19 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     useEffect(() => {
         if (!projectLoaded) return;
         const pollCanvasTasks = () => {
-            nodesRef.current.filter((node) => node.metadata?.status === "stopping" && !node.metadata.errorDetails).forEach((node) => { void handleStopNode(node.id); });
+            // 后台标签页不轮询：setInterval 不会被浏览器节流，切后台后每 5s 仍在打一轮 HTTP
+            if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+            // 停止请求每次加载只发一轮：handleStopNode 内部 stopping 状态未变化时重复调用只会反复重写历史数组
+            const stoppingNodes = nodesRef.current.filter((node) => node.metadata?.status === "stopping" && !node.metadata.errorDetails);
+            const stoppingIds = new Set(stoppingNodes.map((node) => node.id));
+            for (const id of [...stopAttemptsRef.current]) {
+                if (!stoppingIds.has(id)) stopAttemptsRef.current.delete(id);
+            }
+            stoppingNodes.forEach((node) => {
+                if (stopAttemptsRef.current.has(node.id)) return;
+                stopAttemptsRef.current.add(node.id);
+                void handleStopNode(node.id);
+            });
             // 只轮询服务端真实任务号：本地直连生成期间节点上只有 client_ 占位号，
             // 拿它去查服务端必然失败（且本地模式根本没有登录态），会把正在生成的节点误判成失败。
             const videoTargets = nodesRef.current.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.status === NODE_STATUS_LOADING && !node.metadata.content && isServerTaskId(canvasVideoTaskId(node.metadata)));
@@ -1020,8 +1083,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         // 画布容器在 projectLoaded 之后才挂载，必须重新取一次尺寸，否则裁剪/小地图会用默认 1200x720。
     }, [projectLoaded]);
 
-    const screenToCanvas = useCallback((clientX: number, clientY: number) => {
-        const rect = containerRef.current?.getBoundingClientRect();
+    const screenToCanvas = useCallback((clientX: number, clientY: number, cachedRect?: DOMRect | null) => {
+        const rect = cachedRect ?? containerRef.current?.getBoundingClientRect();
         const currentViewport = viewportStore.getLive();
         const localX = clientX - (rect?.left || 0);
         const localY = clientY - (rect?.top || 0);
@@ -1040,6 +1103,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const setConnecting = useCallback((next: ConnectionHandle | null) => {
         connectingParamsRef.current = next;
         setConnectingParams(next);
+        if (next) {
+            // 连线手势期间视口不变，一次性缓存容器 rect
+            connectionGestureRectRef.current = containerRef.current?.getBoundingClientRect() || null;
+        } else {
+            connectionGestureRectRef.current = null;
+            pendingConnectionMoveRef.current = null;
+            if (connectionFrameRef.current) {
+                cancelAnimationFrame(connectionFrameRef.current);
+                connectionFrameRef.current = null;
+            }
+        }
         if (!next) {
             connectionTargetNodeIdRef.current = null;
             setConnectionTargetNodeId(null);
@@ -1104,8 +1178,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     }, [setConnecting]);
 
     const getConnectionDropTarget = useCallback(
-        (clientX: number, clientY: number, current: ConnectionHandle): ConnectionDropTarget => {
-            const world = screenToCanvas(clientX, clientY);
+        (clientX: number, clientY: number, current: ConnectionHandle, cachedRect?: DOMRect | null): ConnectionDropTarget => {
+            const world = screenToCanvas(clientX, clientY, cachedRect);
             const scale = Math.max(viewportStore.getLive().k, 0.05);
             const padding = CONNECTION_NODE_HIT_PADDING / scale;
             const handleRadius = CONNECTION_HANDLE_HIT_RADIUS / scale;
@@ -1143,6 +1217,13 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     // 视口裁剪已移到 CanvasStage：只订阅裁剪 tick，用空间索引增量计算，平移不再重算整页。
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    // 拖拽每帧只改 position；下方一批 O(N×C) 派生表（@提及/配置输入/视频素材/全景/连线引用）
+    // 只依赖结构（id/类型/标题/尺寸/元数据）与连线。用"结构等价"比较让 position-only 更新
+    // 沿用上一份 nodes 引用，拖拽期间这些重建整帧跳过。
+    const structuralNodesRef = useRef(nodes);
+    if (!isNodesStructureEqual(structuralNodesRef.current, nodes)) structuralNodesRef.current = nodes;
+    const structuralNodes = structuralNodesRef.current;
+    const structuralNodeById = useMemo(() => new Map(structuralNodes.map((node) => [node.id, node])), [structuralNodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
@@ -1269,20 +1350,20 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
-        nodes.forEach((node) => {
+        structuralNodes.forEach((node) => {
             if (node.type !== CanvasNodeType.Config) return;
-            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
+            map.set(node.id, buildNodeGenerationInputs(node.id, structuralNodes, connections));
         });
         return map;
-    }, [connections, nodes]);
+    }, [connections, structuralNodes]);
     const directorPanoramasByNodeId = useMemo(() => {
         const map = new Map<string, CanvasDirectorPanorama[]>();
-        nodes.forEach((node) => {
+        structuralNodes.forEach((node) => {
             if (node.type === CanvasNodeType.Director) map.set(node.id, []);
         });
         connections.forEach((connection) => {
-            const target = nodeById.get(connection.toNodeId);
-            const source = nodeById.get(connection.fromNodeId);
+            const target = structuralNodeById.get(connection.toNodeId);
+            const source = structuralNodeById.get(connection.fromNodeId);
             if (target?.type !== CanvasNodeType.Director || !isCanvasImageNodeType(source?.type) || !source?.metadata?.content) return;
             map.get(target.id)?.push({
                 edgeId: connection.id,
@@ -1293,37 +1374,37 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             });
         });
         return map;
-    }, [connections, nodeById, nodes]);
+    }, [connections, structuralNodeById, structuralNodes]);
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
+        structuralNodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, structuralNodes, connections)));
         return map;
-    }, [connections, nodes]);
+    }, [connections, structuralNodes]);
     const connectedNodesByNodeId = useMemo(() => {
         const map = new Map<string, CanvasNodeData[]>();
         connections.forEach((connection) => {
-            const source = nodeById.get(connection.fromNodeId);
+            const source = structuralNodeById.get(connection.fromNodeId);
             if (!source || !isCanvasReferenceNode(source)) return;
             const connected = map.get(connection.toNodeId);
             if (connected) connected.push(source);
             else map.set(connection.toNodeId, [source]);
         });
         return map;
-    }, [connections, nodeById]);
+    }, [connections, structuralNodeById]);
     const referenceConnectedNodeIds = useMemo(() => new Set([referencePickerNodeId, ...(referencePickerNodeId ? connectedNodesByNodeId.get(referencePickerNodeId)?.map((node) => node.id) || [] : [])].filter((id): id is string => Boolean(id))), [connectedNodesByNodeId, referencePickerNodeId]);
     const videoFrameOptionsByNodeId = useMemo(() => {
         const map = new Map<string, CanvasVideoFrameOption[]>();
-        nodes.forEach((node) => {
+        structuralNodes.forEach((node) => {
             if (node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Config) return;
             const options = connections.flatMap((connection) => {
                 if (connection.toNodeId !== node.id) return [];
-                const imageNode = nodeById.get(connection.fromNodeId);
+                const imageNode = structuralNodeById.get(connection.fromNodeId);
                 return isCanvasImageNodeType(imageNode?.type) && imageNode?.metadata?.content ? [{ nodeId: imageNode.id, label: imageNode.title || "图片节点", previewUrl: imageNode.metadata.content }] : [];
             });
             map.set(node.id, options);
         });
         return map;
-    }, [connections, nodeById, nodes]);
+    }, [connections, structuralNodeById, structuralNodes]);
     const videoResourceOptionsByNodeId = useMemo(() => {
         const map = new Map<string, CanvasVideoResourceOption[]>();
         nodes.forEach((node) => {
@@ -1396,6 +1477,17 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             });
             const removedNodes = nodesRef.current.filter((node) => allIds.has(node.id));
             const remainingNodes = nodesRef.current.filter((node) => !allIds.has(node.id));
+            // 删除生成中的节点：中止在途请求与轮询，并清掉任务表里钉住任务结果的引用。
+            // 裸 nodeId key 此前永远不会被清理（历史清理只删含 ":" 的复合 key），会随删除累积泄漏。
+            allIds.forEach((id) => {
+                nodeTaskRunsRef.current.get(id)?.controller.abort();
+                nodeTaskRunsRef.current.delete(id);
+                for (const pollingMap of [pollingImageNodeIdsRef, pollingVideoNodeIdsRef, pollingAudioNodeIdsRef]) {
+                    pollingMap.current.get(id)?.abort();
+                    pollingMap.current.delete(id);
+                }
+                stopAttemptsRef.current.delete(id);
+            });
             // 删除后自动清理没有成员的空组
             const emptyGroupIds = new Set(remainingNodes.filter((node) => node.type === CanvasNodeType.Group && !remainingNodes.some((child) => child.metadata?.groupId === node.id)).map((node) => node.id));
             emptyGroupIds.forEach((id) => allIds.add(id));
@@ -2051,10 +2143,19 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             }
 
             if (connectingParamsRef.current && !pendingConnectionCreateRef.current) {
-                const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, connectingParamsRef.current);
-                connectionTargetNodeIdRef.current = dropTarget.nodeId;
-                setConnectionTargetNodeId(dropTarget.nodeId);
-                setMouseWorld(screenToCanvas(event.clientX, event.clientY));
+                // 连线拖拽与节点拖拽同款按帧合并：高回报率鼠标下每条 mousemove 都曾触发整页重渲染
+                pendingConnectionMoveRef.current = { x: event.clientX, y: event.clientY };
+                if (connectionFrameRef.current) return;
+                connectionFrameRef.current = requestAnimationFrame(() => {
+                    connectionFrameRef.current = null;
+                    const pending = pendingConnectionMoveRef.current;
+                    const current = connectingParamsRef.current;
+                    if (!pending || !current || pendingConnectionCreateRef.current) return;
+                    const dropTarget = getConnectionDropTarget(pending.x, pending.y, current, connectionGestureRectRef.current);
+                    connectionTargetNodeIdRef.current = dropTarget.nodeId;
+                    setConnectionTargetNodeId(dropTarget.nodeId);
+                    setMouseWorld(screenToCanvas(pending.x, pending.y, connectionGestureRectRef.current));
+                });
             }
         },
         [getConnectionDropTarget, screenToCanvas],
@@ -2338,7 +2439,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             const target = event.target instanceof Element ? event.target : null;
             const targetNodeId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
             const isSelectedVideo = event.target instanceof HTMLVideoElement && Boolean(targetNodeId && selectedNodeIdsRef.current.has(targetNodeId));
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']") || (target?.closest("[data-canvas-no-zoom]") && !isSelectedVideo)) return;
+            // 中文输入法组合键期间不触发画布快捷键；antd Modal/Drawer 门户渲染在 body 下，
+            // 不排除的话弹窗里按 Backspace/Ctrl+Z 会误删或撤销背后的画布节点；
+            // 全屏预览打开时按键归预览组件处理
+            if (event.isComposing) return;
+            if (document.body.dataset.canvasFullscreenOpen) return;
+            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']") || target?.closest(".ant-modal-root, .ant-drawer") || (target?.closest("[data-canvas-no-zoom]") && !isSelectedVideo)) return;
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
@@ -5623,6 +5729,7 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
 }
 
 function Shortcut({ keys, value }: { keys: string[]; value: string }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -5631,7 +5738,7 @@ function Shortcut({ keys, value }: { keys: string[]; value: string }) {
                         {index ? <span className="text-xs opacity-35">+</span> : null}
                         <kbd
                             className="min-w-9 rounded-md border px-2.5 py-1.5 text-center text-xs font-medium leading-none shadow-[inset_0_-1px_0_rgba(0,0,0,.08),0_1px_2px_rgba(0,0,0,.06)]"
-                            style={{ borderColor: "rgba(120,113,108,.28)", background: "linear-gradient(#fff, rgba(245,245,244,.92))", color: "rgb(68,64,60)" }}
+                            style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel, color: theme.toolbar.item }}
                         >
                             {key}
                         </kbd>

@@ -35,12 +35,13 @@ export function FullscreenPreview({ src, alt, isVideo, isPanorama, proxyGenerate
         return () => previousFocus?.focus({ preventScroll: true });
     }, [isVideo]);
 
+    // 打开期间在 body 上挂标记：画布全局快捷键据此跳过，预览内的 ESC/方向键由本组件自行处理
     useEffect(() => {
-        const el = imgRef.current;
-        if (!el) return;
-        el.addEventListener("wheel", handleWheel, { passive: false });
-        return () => el.removeEventListener("wheel", handleWheel);
-    });
+        document.body.dataset.canvasFullscreenOpen = "1";
+        return () => {
+            delete document.body.dataset.canvasFullscreenOpen;
+        };
+    }, []);
 
     const handleWheel = (e: WheelEvent) => {
         e.stopPropagation();
@@ -51,6 +52,16 @@ export function FullscreenPreview({ src, alt, isVideo, isPanorama, proxyGenerate
             return next;
         });
     };
+    // 只在内容形态变化时重挂监听：无依赖数组会在每次缩放/拖动的渲染里反复拆装 wheel 监听
+    const handleWheelRef = useRef(handleWheel);
+    handleWheelRef.current = handleWheel;
+    useEffect(() => {
+        const el = imgRef.current;
+        if (!el) return;
+        const onWheel = (event: WheelEvent) => handleWheelRef.current(event);
+        el.addEventListener("wheel", onWheel, { passive: false });
+        return () => el.removeEventListener("wheel", onWheel);
+    }, [src, isVideo, isPanorama]);
 
     const handlePointerDown = (e: ReactPointerEvent) => {
         e.stopPropagation();

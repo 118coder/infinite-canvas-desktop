@@ -126,6 +126,8 @@ type RequestSnapshot = { text: string; requestConfig: AiConfig; displayConfig: G
 type GenerationCategory = { id: string; name: string; createdAt: number };
 type ResultViewMode = "all" | "category";
 type WorkflowPollContext = { token: string; signal: AbortSignal };
+// 历史画廊每页渲染条数
+const LOG_PAGE_SIZE = 24;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 type WorkbenchLayout = "side" | "bottom";
@@ -166,8 +168,9 @@ export default function ImagePage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-    const [now, setNow] = useState(Date.now());
-    const [workflowButtonPosition, setWorkflowButtonPosition] = useState({ x: 0, y: 0 });
+    // 初值用与服务端一致的常量，真实位置在挂载后的 effect 里设置——
+    // 此前样式里 typeof window 分支在客户端首渲染就读 window 尺寸，造成水合不匹配
+    const [workflowButtonPosition, setWorkflowButtonPosition] = useState({ x: 24, y: 320 });
     const workflowButtonRef = useRef<HTMLButtonElement>(null);
     const workflowButtonDragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
     const accountHistorySyncEnabledRef = useRef(false);
@@ -251,11 +254,7 @@ export default function ImagePage() {
         void refreshLogs().then((items) => syncBackendImageTasks(items));
     }, [isUserReady, token]);
 
-    useEffect(() => {
-        if (!pendingCount && !pendingLogCount) return;
-        const timer = window.setInterval(() => setNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
-    }, [pendingCount, pendingLogCount]);
+    // 生成中的耗时展示由 PendingImageCard 自己每秒刷新，不再用根组件级 1s 时钟整页重渲染
 
     useEffect(() => {
         const context = pollContextRef.current;
@@ -351,7 +350,7 @@ export default function ImagePage() {
             const items = await navigator.clipboard.read();
             const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
             if (!blobs.length) {
-                message.error("剪切板里没有可读取的图片");
+                message.error("剪贴板里没有可读取的图片");
                 return;
             }
             setUploadingCount(blobs.length);
@@ -370,7 +369,7 @@ export default function ImagePage() {
                 setUploadingCount(0);
             }
         } catch {
-            message.error("剪切板里没有可读取的图片");
+            message.error("剪贴板里没有可读取的图片");
             setUploadingCount(0);
         }
     };
@@ -395,13 +394,13 @@ export default function ImagePage() {
         try {
             const text = (await navigator.clipboard.readText()).trim();
             if (!text) {
-                message.error("剪切板里没有可读取的文本");
+                message.error("剪贴板里没有可读取的文本");
                 return;
             }
             setPrompt(text);
-            message.success("已读取剪切板文本");
+            message.success("已读取剪贴板文本");
         } catch {
-            message.error("剪切板里没有可读取的文本");
+            message.error("剪贴板里没有可读取的文本");
         }
     };
 
@@ -489,7 +488,6 @@ export default function ImagePage() {
             });
         });
         setResults((value) => mergePendingLogResults(value, pendingLogs));
-        setNow(Date.now());
 
         const settled = await Promise.allSettled(pendingLogs.map((log, index) => createPersistentImageTask(log, snapshot, index, taskCount, workflowToken)));
         if (!active()) return;
@@ -557,7 +555,6 @@ export default function ImagePage() {
         const taskIds = Array.from({ length: taskCount }, () => nanoid());
         const pendingTasks = taskIds.map((id) => createPendingResult(id, snapshot));
         setResults((value) => [...pendingTasks, ...value]);
-        setNow(Date.now());
 
         const tasks = taskIds.map(async (id, index) => {
             const taskStartedAt = performance.now();
@@ -1164,7 +1161,6 @@ export default function ImagePage() {
         setResultViewMode("all");
         setActiveResultCategoryId(null);
         setResults((value) => [...pendingItems, ...value]);
-        setNow(Date.now());
     };
 
     const handleWorkflowTaskSuccess = (task: WorkflowExternalTaskSuccess) => {
@@ -1261,7 +1257,6 @@ export default function ImagePage() {
                             resultViewMode={resultViewMode}
                             activeCategoryId={activeResultCategoryId}
                             pendingCount={pendingCount}
-                            now={now}
                             selectedLogIds={selectedLogIds}
                             activeLogId={previewLog?.id}
                             onSelectedLogIdsChange={setSelectedLogIds}
@@ -1298,7 +1293,6 @@ export default function ImagePage() {
                             resultViewMode={resultViewMode}
                             activeCategoryId={activeResultCategoryId}
                             pendingCount={pendingCount}
-                            now={now}
                             selectedLogIds={selectedLogIds}
                             activeLogId={previewLog?.id}
                             onSelectedLogIdsChange={setSelectedLogIds}
@@ -1355,8 +1349,8 @@ export default function ImagePage() {
                 type="button"
                 className="fixed z-50 inline-flex touch-none select-none items-center gap-2 rounded-full border border-sky-300/70 bg-white/90 px-4 py-3 text-sm font-semibold text-stone-950 shadow-[0_18px_50px_rgba(14,165,233,0.28),0_8px_18px_rgba(0,0,0,0.14)] ring-1 ring-white/70 backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-white hover:shadow-[0_22px_64px_rgba(14,165,233,0.36),0_10px_22px_rgba(0,0,0,0.18)] dark:border-sky-400/40 dark:bg-stone-900/88 dark:text-stone-100 dark:ring-white/10 dark:hover:bg-stone-900"
                 style={{
-                    left: (typeof window === "undefined" ? defaultWorkflowButtonPosition() : clampWorkflowButtonPosition(workflowButtonPosition.x || workflowButtonPosition.y ? workflowButtonPosition : defaultWorkflowButtonPosition())).x,
-                    top: (typeof window === "undefined" ? defaultWorkflowButtonPosition() : clampWorkflowButtonPosition(workflowButtonPosition.x || workflowButtonPosition.y ? workflowButtonPosition : defaultWorkflowButtonPosition())).y
+                    left: workflowButtonPosition.x,
+                    top: workflowButtonPosition.y
                 }}
                 onPointerDown={handleWorkflowButtonPointerDown}
                 onPointerMove={handleWorkflowButtonPointerMove}
@@ -1589,7 +1583,7 @@ function WorkbenchPanel({
                     </div>
                     <div className="border-t border-stone-200 p-3 dark:border-stone-800 space-y-2">
                         <div className="flex flex-wrap gap-1">
-                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences}>剪切板</Button>
+                            <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={onPasteReferences}>剪贴板</Button>
                             <Button size="small" icon={<Upload className="size-3.5" />} onClick={onUploadReferences}>上传</Button>
                             <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={onOpenAssetPicker}>从我的素材选择</Button>
                         </div>
@@ -1659,7 +1653,7 @@ function ReferenceStrip({ references, compact = false, className = "", onRemoveR
                     <LoaderCircle className="size-5 animate-spin text-stone-400" />
                 </div>
             ))}
-            {!references.length && !uploadingCount ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">暂无参考图</div> : null}
+            {!references.length && !uploadingCount ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500 dark:text-stone-400">暂无参考图</div> : null}
         </div>
     );
 }
@@ -1668,7 +1662,7 @@ function ReferenceQuickActions({ references, onUploadReferences }: { references:
     return (
         <div className="flex h-11 items-center gap-1 rounded-xl border border-stone-200 bg-background px-2 dark:border-stone-800">
             {references[0] ? <img src={references[0].dataUrl || undefined} alt={references[0].name} className="size-7 rounded object-cover" /> : null}
-            {references.length ? <span className="min-w-7 text-xs text-stone-500">{references.length} 张</span> : null}
+            {references.length ? <span className="min-w-7 text-xs text-stone-500 dark:text-stone-400">{references.length} 张</span> : null}
             <Button size="small" type="text" icon={<Upload className="size-3.5" />} onClick={onUploadReferences} />
         </div>
     );
@@ -1724,7 +1718,6 @@ function ResultsPanel({
     resultViewMode,
     activeCategoryId,
     pendingCount,
-    now,
     selectedLogIds,
     activeLogId,
     onSelectedLogIdsChange,
@@ -1757,7 +1750,6 @@ function ResultsPanel({
     resultViewMode: ResultViewMode;
     activeCategoryId: string | null;
     pendingCount: number;
-    now: number;
     selectedLogIds: string[];
     activeLogId?: string;
     onSelectedLogIdsChange: (ids: string[]) => void;
@@ -1786,6 +1778,9 @@ function ResultsPanel({
     const { message } = App.useApp();
     const [creatingCategory, setCreatingCategory] = useState(false);
     const [categoryName, setCategoryName] = useState("");
+    // 历史卡片很重（antd Image + 多张小图 + 十几个交互件），全部历史一次性渲染会让每次
+    // 输入提示词的整页重渲染随历史条数线性变卡；分页后每次只渲染一页，其余点「加载更多」
+    const [visibleLogLimit, setVisibleLogLimit] = useState(LOG_PAGE_SIZE);
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
     const liveImageIds = new Set(results.map((result) => result.image?.id).filter((id): id is string => Boolean(id)));
     const liveLogIds = new Set(results.flatMap(imageResultIdentityKeys));
@@ -1793,6 +1788,7 @@ function ResultsPanel({
     const categoryGroups = categories.map((category) => ({ category, logs: baseVisibleLogs.filter((log) => log.categoryIds.includes(category.id)) }));
     const activeCategory = activeCategoryId ? categories.find((category) => category.id === activeCategoryId) : null;
     const visibleLogs = resultViewMode === "category" ? (activeCategoryId ? baseVisibleLogs.filter((log) => log.categoryIds.includes(activeCategoryId)) : baseVisibleLogs.filter((log) => !log.categoryIds.length)) : baseVisibleLogs;
+    const shownLogs = visibleLogs.slice(0, visibleLogLimit);
     const totalCount = results.length + (resultViewMode === "category" ? (activeCategoryId ? visibleLogs.length : categories.length + visibleLogs.length) : visibleLogs.length);
     const shouldShowGrid = totalCount > 0;
     const allVisibleLogsSelected = Boolean(visibleLogs.length) && visibleLogs.every((log) => selectedLogIds.includes(log.id));
@@ -1813,6 +1809,10 @@ function ResultsPanel({
     useEffect(() => {
         if (activeCategoryId && !categories.some((category) => category.id === activeCategoryId)) onActiveCategoryChange(null);
     }, [activeCategoryId, categories, onActiveCategoryChange]);
+
+    useEffect(() => {
+        setVisibleLogLimit(LOG_PAGE_SIZE);
+    }, [activeCategoryId, resultViewMode]);
 
     useEffect(() => {
         [...results.flatMap((result) => result.image ? [result.image] : []), ...logs.flatMap((log) => log.images)]
@@ -1864,14 +1864,15 @@ function ResultsPanel({
                 </div>
             </div>
             {shouldShowGrid ? (
-                <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                <>
+                    <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                     {results.map((result, index) =>
                         result.status === "success" && result.image ? (
                             <ResultImageCard key={result.id} result={result} image={result.image} index={index} onCopyPrompt={onCopyPrompt} onEdit={onEdit} onDownload={onDownload} onSaveAsset={onSaveAsset} syncing={syncingImageIds.includes(result.image.id)} onSync={(image) => onSyncResult(result.id, image, index)} />
                         ) : result.status === "failed" ? (
                             <FailedImageCard key={result.id} result={result} error={result.error || "生成失败"} onCopyPrompt={onCopyPrompt} onRetry={() => onRetry(result)} />
                         ) : (
-                            <PendingImageCard key={result.id} result={result} now={now} onCopyPrompt={onCopyPrompt} />
+                            <PendingImageCard key={result.id} result={result} onCopyPrompt={onCopyPrompt} />
                         ),
                     )}
                     {resultViewMode === "category" ? (
@@ -1883,7 +1884,7 @@ function ResultsPanel({
                                 : null}
                         </>
                     ) : null}
-                    {visibleLogs.map((log, index) => (
+                    {shownLogs.map((log, index) => (
                         <HistoryLogCard
                             key={log.id}
                             log={log}
@@ -1907,7 +1908,15 @@ function ResultsPanel({
                             onSync={(image) => onSyncLog(log, image, index)}
                         />
                     ))}
-                </div>
+                    </div>
+                    {shownLogs.length < visibleLogs.length ? (
+                        <div className="flex justify-center pb-2">
+                            <Button size="small" onClick={() => setVisibleLogLimit((current) => current + LOG_PAGE_SIZE)}>
+                                加载更多历史（还有 {visibleLogs.length - shownLogs.length} 条）
+                            </Button>
+                        </div>
+                    ) : null}
+                </>
             ) : (
                 <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
                     <ImagePlus className="mb-4 size-11 text-stone-400" />
@@ -1971,7 +1980,7 @@ function CategoryCard({
                         ))}
                     </>
                 ) : (
-                    <div className="flex size-full items-center justify-center text-sm text-stone-500">暂无图片</div>
+                    <div className="flex size-full items-center justify-center text-sm text-stone-500 dark:text-stone-400">暂无图片</div>
                 )}
             </div>
             <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 via-black/45 to-transparent p-3 pt-10 text-white">
@@ -2072,7 +2081,13 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard({ result, now, onCopyPrompt }: { result: GenerationResult; now: number; onCopyPrompt: (text: string) => void | Promise<void> }) {
+function PendingImageCard({ result, onCopyPrompt }: { result: GenerationResult; onCopyPrompt: (text: string) => void | Promise<void> }) {
+    // 耗时展示自己每秒刷新（与 image-generation-pending 相同的模式），避免根组件级 1s 时钟整页重渲染
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
     return (
         <div className="overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div className="relative aspect-[4/3]">
@@ -2324,7 +2339,7 @@ function HistoryLogCard({
                                         <span className="truncate">{category.name}</span>
                                     </label>
                                 ))}
-                                {!categories.length ? <div className="px-2 py-3 text-center text-xs text-stone-500">暂无分类</div> : null}
+                                {!categories.length ? <div className="px-2 py-3 text-center text-xs text-stone-500 dark:text-stone-400">暂无分类</div> : null}
                             </div>
                             <div className="mt-2 flex gap-1 border-t border-stone-200 pt-2 dark:border-stone-800">
                                 <Input size="small" value={categoryName} placeholder="新分类" onChange={(event) => setCategoryName(event.target.value)} onPressEnter={() => void createCategory()} />

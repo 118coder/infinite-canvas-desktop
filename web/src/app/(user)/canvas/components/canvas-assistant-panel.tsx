@@ -552,15 +552,22 @@ export function CanvasAssistantPanel({
         if (user) void sendMessage(user.text, user.references, user.skills || []);
     };
 
+    // 拖宽中途组件被卸载时兜底摘掉 document 监听并还原 body 状态
+    const resizeCleanupRef = useRef<(() => void) | null>(null);
+    useEffect(() => () => resizeCleanupRef.current?.(), []);
+
     const startResize = () => {
         const move = (event: MouseEvent) => onWidthChange(Math.min(760, Math.max(464, window.innerWidth - event.clientX)));
-        const stop = () => {
+        const cleanup = () => {
+            resizeCleanupRef.current = null;
             setResizing(false);
             document.body.style.cursor = "";
             document.body.style.userSelect = "";
             document.removeEventListener("mousemove", move);
             document.removeEventListener("mouseup", stop);
         };
+        const stop = () => cleanup();
+        resizeCleanupRef.current = cleanup;
         setResizing(true);
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";

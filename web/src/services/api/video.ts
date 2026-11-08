@@ -136,7 +136,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         if (accountProxy) createOptions.onServerTask?.();
         const created = directProvider
             ? await (await import("@/services/api/direct-ai")).createDirectVideoTask(config, directProvider, body, createOptions.signal)
-            : unwrapVideoResponseForConfig(config, model, (await axios.post<ApiVideoResponse>(createUrl, requestBody, { headers, signal: accountProxy ? undefined : createOptions.signal })).data);
+            : unwrapVideoResponseForConfig(config, model, (await axios.post<ApiVideoResponse>(createUrl, requestBody, { headers, signal: createOptions.signal })).data);
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         refreshRemoteUser(config);
         const task = await syncGeneratedVideo(created, config);

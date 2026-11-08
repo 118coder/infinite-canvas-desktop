@@ -1,11 +1,11 @@
 "use client";
 
 import { Menu, Settings2 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
-import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { useCanvasUiStore } from "@/app/(user)/canvas/stores/use-canvas-ui-store";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -13,10 +13,14 @@ import { useUpdateStore } from "@/stores/use-update-store";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
+// 设置弹窗体量很大（数据打包、zip/MD5、全套 TTS 语音库都被它静态依赖），只在打开时挂载
+const AppConfigModal = dynamic(() => import("@/components/layout/app-config-modal").then((mod) => mod.AppConfigModal), { ssr: false });
+
 export function AppTopNav() {
     const pathname = usePathname();
     const openProjectId = useCanvasUiStore((state) => state.openProjectId);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const hasNewVersion = useUpdateStore((state) => state.hasNewVersion);
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const hideHeader = Boolean(openProjectId);
@@ -98,7 +102,7 @@ export function AppTopNav() {
             ) : null}
 
             <MobileNavDrawer open={mobileNavOpen} activeToolSlug={activeToolSlug} onClose={() => setMobileNavOpen(false)} />
-            <AppConfigModal />
+            {isConfigOpen ? <AppConfigModal /> : null}
         </>
     );
 }

@@ -235,7 +235,6 @@ export function CreativeWorkflowWorkspace({
     const [seriesDrafts, setSeriesDrafts] = useState<SeriesPromptDraft[]>([]);
     const [seriesDraftLoading, setSeriesDraftLoading] = useState(false);
     const [seriesBatchAppend, setSeriesBatchAppend] = useState("");
-    const [now, setNow] = useState(Date.now());
     const [query, setQuery] = useState("");
     const [workflowCategory, setWorkflowCategory] = useState("all");
     const [agentOpen, setAgentOpen] = useState(false);
@@ -280,11 +279,7 @@ export function CreativeWorkflowWorkspace({
         if (!agentTextChannelId && effectiveConfig.textChannelId) setAgentTextChannelId(effectiveConfig.textChannelId);
     }, [agentTextChannelId, agentTextModel, effectiveConfig.model, effectiveConfig.textChannelId, effectiveConfig.textModel]);
 
-    useEffect(() => {
-        if (!runningTaskCount) return;
-        const timer = window.setInterval(() => setNow(Date.now()), 1000);
-        return () => window.clearInterval(timer);
-    }, [runningTaskCount]);
+    // 任务卡耗时展示由 WorkflowTaskCard 自己每秒刷新，不再用根组件级 1s 时钟整页重渲染
 
     useEffect(() => {
         if (!runningWorkflow || runningWorkflow.mode !== "multi_image_series" || !seriesDraftsLoadedRef.current) return;
@@ -998,7 +993,7 @@ export function CreativeWorkflowWorkspace({
                         </div>
                         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                             {workflowTasks.map((task) => (
-                                <WorkflowTaskCard key={task.id} task={task} now={now} onCopyPrompt={() => void navigator.clipboard.writeText(task.prompt)} onDownload={(image, index) => saveAs(image.imageUrl, `workflow-task-${index + 1}.png`)} />
+                                <WorkflowTaskCard key={task.id} task={task} onCopyPrompt={() => void navigator.clipboard.writeText(task.prompt)} onDownload={(image, index) => saveAs(image.imageUrl, `workflow-task-${index + 1}.png`)} />
                             ))}
                         </div>
                     </section>
@@ -1353,7 +1348,13 @@ function WorkflowCard({ workflow, onRun, onEdit, onCopy, onDelete }: { workflow:
     );
 }
 
-function WorkflowTaskCard({ task, now, onCopyPrompt, onDownload }: { task: WorkflowTask; now: number; onCopyPrompt: () => void; onDownload: (image: WorkflowRunResult, index: number) => void }) {
+function WorkflowTaskCard({ task, onCopyPrompt, onDownload }: { task: WorkflowTask; onCopyPrompt: () => void; onDownload: (image: WorkflowRunResult, index: number) => void }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (task.status !== "running") return;
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [task.status]);
     const elapsedMs = task.status === "running" ? now - task.startedAt : task.durationMs || (task.endedAt || task.startedAt) - task.startedAt;
     const statusView = {
         running: { label: "运行中", color: "processing", icon: <LoaderCircle className="size-4 animate-spin" /> },

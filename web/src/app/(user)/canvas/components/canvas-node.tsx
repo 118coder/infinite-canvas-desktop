@@ -12,6 +12,7 @@ import { ensureImagePreview, getImagePreviewVersion, previewUrlFor, resolveImage
 import { repairMissingMedia, resolveRepairedProjects } from "@/services/data-package";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasErrorBoundary } from "./canvas-error-boundary";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { isCanvasImageNodeType } from "../utils/canvas-panorama";
@@ -390,8 +391,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
             ) : null}
 
-            <div
-                className={`relative h-full w-full overflow-visible border ${isGroup ? "rounded-xl" : "rounded-3xl border-2"}`}
+            <CanvasErrorBoundary label={`${data.type}:${data.title || data.id}`}>
+                <div
+                    className={`relative h-full w-full overflow-visible border ${isGroup ? "rounded-xl" : "rounded-3xl border-2"}`}
                 style={{
                     background: isGroup ? (lightweight ? "transparent" : theme.node.panel) : hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                     borderColor: isGroup ? isGroupDropTarget || isActive ? selectionBlue : theme.node.stroke : hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
@@ -476,7 +478,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                 {!lightweight && !referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
                 {!lightweight && !referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
                 {!lightweight && !referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
-            </div>
+                </div>
+            </CanvasErrorBoundary>
 
             {!lightweight && !referenceSelectionState && !isGroup ? (
                 <>

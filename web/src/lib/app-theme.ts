@@ -50,6 +50,9 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             colorLinkHover: color.primaryHover,
             colorLinkActive: color.primary,
             colorTextLightSolid: color.primaryText,
+            // 画布自定义浮层最高到 2000（全屏预览/导演视图），自定义 popover 1100-1300。
+            // 抬高 antd 全家桶基准：Modal/下拉盖过页内 popover，message toast 高于全屏预览不再被吞。
+            zIndexPopupBase: 2100,
         },
         components: {
             Button: {

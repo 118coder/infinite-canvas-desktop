@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { Button, Card, Checkbox, Form, Modal, Space, Switch, Tag, Tooltip, Typography, theme as antdTheme } from "antd";
 import { Ellipsis, Image as ImageIcon, Settings2 } from "lucide-react";
 
+import { canvasThemes } from "@/lib/canvas-theme";
+import { useThemeStore } from "@/stores/use-theme-store";
 import type { ImageQuickToolId } from "./canvas-image-toolbar-tools";
 
 export type ImageToolbarSettingsTool = {
@@ -51,6 +53,7 @@ export function ImageToolSettingsModal({
     onSave: () => void;
 }) {
     const { token } = antdTheme.useToken();
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const previewToolbarRef = useRef<HTMLDivElement>(null);
     const scrollbarTrackRef = useRef<HTMLInputElement>(null);
     const [previewScroll, setPreviewScroll] = useState<PreviewScroll>({ left: 0, max: 0, viewport: 1, content: 1 });
@@ -159,7 +162,8 @@ export function ImageToolSettingsModal({
                 <div className="relative flex min-h-[300px] w-full justify-center pt-20 pb-9">
                     <div
                         ref={previewToolbarRef}
-                        className="hide-scrollbar absolute left-2 right-2 top-3 z-10 flex h-12 items-center gap-x-2 overflow-x-auto rounded-xl border border-white/10 bg-[#242424] px-2 text-[13px] text-[#f3f3f3] shadow-[0_8px_28px_rgba(0,0,0,.28)]"
+                        className="hide-scrollbar absolute left-2 right-2 top-3 z-10 flex h-12 items-center gap-x-2 overflow-x-auto rounded-xl border px-2 text-[13px] shadow-[0_8px_28px_rgba(0,0,0,.28)]"
+                        style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                         onScroll={syncPreviewScroll}
                     >
                         {previewTools.map((tool) => (

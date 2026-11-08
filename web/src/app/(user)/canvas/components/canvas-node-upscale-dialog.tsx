@@ -52,7 +52,7 @@ export function CanvasNodeUpscaleDialog({ dataUrl, open, onClose, onConfirm }: {
     }, [image, sourceLongEdge]);
 
     return (
-        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={820} centered destroyOnHidden>
+        <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width="min(820px, 94vw)" centered destroyOnHidden>
             <div className="space-y-5">
                 <div>
                     <h2 className="text-xl font-semibold">图片放大</h2>

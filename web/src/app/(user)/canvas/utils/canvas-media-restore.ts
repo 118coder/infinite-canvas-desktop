@@ -9,8 +9,8 @@ export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
 }
 
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
+    // 限制并发：服务端存储的画布首次恢复时会逐节点请求元数据，N 路并发会把连接池和服务端打满
+    return mapWithConcurrency(nodes, 6, async (node) => {
             try {
                 const content = node.metadata?.content;
                 if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
@@ -31,8 +31,20 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
                 console.error("节点媒体恢复失败", node.id, error);
                 return node;
             }
-        }),
-    );
+    });
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let next = 0;
+    const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            const index = next++;
+            results[index] = await worker(items[index]);
+        }
+    });
+    await Promise.all(runners);
+    return results;
 }
 
 // 恢复媒体时整体加超时兜底：底层 IndexedDB/图片解码卡住时，画布仍然可以进入

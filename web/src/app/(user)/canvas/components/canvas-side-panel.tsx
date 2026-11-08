@@ -114,16 +114,23 @@ export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNo
         return () => window.clearTimeout(timer);
     }, [open]);
 
+    // 拖宽中途组件被卸载（路由跳转/关闭面板）时兜底摘掉 window 监听
+    const resizeCleanupRef = useRef<(() => void) | null>(null);
+    useEffect(() => () => resizeCleanupRef.current?.(), []);
+
     const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
         event.preventDefault();
         const startX = event.clientX;
         const startWidth = width;
         const onMove = (moveEvent: PointerEvent) => onWidthChange(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, startWidth + moveEvent.clientX - startX)));
-        const onUp = () => {
+        const cleanup = () => {
+            resizeCleanupRef.current = null;
             window.removeEventListener("pointermove", onMove);
             window.removeEventListener("pointerup", onUp);
             setResizing(false);
         };
+        const onUp = () => cleanup();
+        resizeCleanupRef.current = cleanup;
         setResizing(true);
         window.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
