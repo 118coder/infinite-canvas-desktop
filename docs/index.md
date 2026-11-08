@@ -11,6 +11,7 @@
 
 - [画布节点操作手册](canvas/canvas-node-manual.md)
 - [画布快捷键](canvas/canvas-shortcuts.md)
+- [canvas-cli：AI 自动生图 / 审稿命令行](canvas/canvas-cli.md)
 
 ## 开发文档
 

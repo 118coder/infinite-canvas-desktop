@@ -41,12 +41,15 @@ jobs:
         run: |
           go mod tidy
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o infinite-canvas-desktop.exe ./desktop
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o canvas-cli.exe ./cmd/canvas-cli
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: infinite-canvas-desktop
-          path: infinite-canvas-desktop.exe
+          path: |
+            infinite-canvas-desktop.exe
+            canvas-cli.exe
 
       - name: Attach to rolling release
         continue-on-error: true
@@ -55,5 +58,7 @@ jobs:
           tag_name: desktop-latest
           name: 桌面版（自动构建）
           prerelease: true
-          files: infinite-canvas-desktop.exe
+          files: |
+            infinite-canvas-desktop.exe
+            canvas-cli.exe
           overwrite_files: true

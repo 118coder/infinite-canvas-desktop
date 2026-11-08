@@ -52,6 +52,7 @@ jobs:
         run: |
           go mod tidy
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o infinite-canvas-desktop.exe ./desktop
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o canvas-cli.exe ./cmd/canvas-cli
 
       - name: Package release zip
         run: |
@@ -70,6 +71,7 @@ jobs:
           # exe 保持原文件名：userdata / desktop-port.txt 都按 exe 目录定位，重命名不影响，
           # 但保留原名可以让老用户从 %AppData%\infinite-canvas-desktop.exe 自动迁移数据。
           copy("infinite-canvas-desktop.exe", "infinite-canvas-desktop.exe")
+          copy("canvas-cli.exe", "canvas-cli.exe")
           copy("docs/使用说明.md", "使用说明.md")
           copy("LICENSE", "LICENSE")
           copy("VERSION", "VERSION")
@@ -78,7 +80,8 @@ jobs:
               "1. 解压到有写权限的目录（不要放 C:\\Program Files）\n"
               "2. 双击 infinite-canvas-desktop.exe\n"
               "3. 首次启动会在同目录生成 userdata 文件夹，画布和图片都存在这里\n"
-              "4. 打开后点右上角齿轮配置模型渠道（Base URL / API Key）即可开始使用\n\n"
+              "4. 打开后点右上角齿轮配置模型渠道（Base URL / API Key）即可开始使用\n"
+              "5. 进阶：同目录的 canvas-cli.exe 是给 AI 用的自动生图/审稿命令行，在终端执行 canvas-cli.exe help 查看用法\n\n"
               f"版本：{version}\n详细说明见 使用说明.md\n",
               encoding="utf-8",
           )
@@ -139,4 +142,5 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             infinite-canvas-desktop.exe
+            canvas-cli.exe
             infinite-canvas-*-win-x64.zip
