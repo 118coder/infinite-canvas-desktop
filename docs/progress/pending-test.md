@@ -5,6 +5,15 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+## Alt + 点击快速加参考（本轮新增）
+
+- 现有能力说明：此前已有「从画布选择参考」（提示词面板里点按钮再点节点）和「节点右侧圆点拖线」，但都要先打开面板或精确拖拽，不算快捷键
+- 新增 `connectAltReference`：先点选目标节点，按住 `Alt` 点击作为参考的节点即可连线；方向固定 参考 → 目标，复用 `normalizeConnection` 的既有方向规则（含配置节点、导演台特例），已存在的连线自动去重
+- 可一次给多个选中节点加同一张参考；目标为空或有节点不能作参考时给出明确中文提示
+- `InfiniteCanvas` 里增加了 Alt 键的 `preventDefault`：Windows 下单独按 Alt 不再激活窗口菜单、不抢焦点，否则后续 Alt+点击收不到事件
+- 快捷键面板（画布页与缩放控件两处）与 `docs/canvas/canvas-shortcuts.md` 已同步
+- 待人工验证：选中 A 后 Alt+点击 B，A 的提示词面板「参考内容」出现 B；A、B 顺序反过来时方向随之反转；重复 Alt+点击同一对不产生重复连线；选中多个目标后 Alt 点击一张参考，全部目标都加上；Alt+点击文本/视频节点同样生效；配置节点与导演台连线方向正确；Windows 下按 Alt 不弹菜单
+
 ## 追加选择节点修复（v0.12.1）
 
 - `handleNodeMouseDown` 里立即把计算出的新选中集合写回 `selectedNodeIdsRef.current`，避免修饰键连点时 `useLayoutEffect` 用旧 state 覆盖 ref，导致 Shift / Ctrl / Cmd + 点击追加无效

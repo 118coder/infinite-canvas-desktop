@@ -257,17 +257,29 @@ export function InfiniteCanvas({ containerRef, tool, backgroundMode = "lines", g
     }, [gridSize]);
 
     useEffect(() => {
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.code !== "Space") return;
+        const isEditableTarget = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']")) return;
+            return event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || Boolean(target?.closest("[contenteditable='true']"));
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            // 单独按 Alt 在 Windows 上会激活窗口菜单并抢走焦点，导致后续 Alt+点击收不到事件。
+            // 画布里 Alt 只用于"加参考"，这里直接吃掉它的默认行为。
+            if (event.key === "Alt" && !isEditableTarget(event)) {
+                event.preventDefault();
+                return;
+            }
+            if (event.code !== "Space") return;
+            if (isEditableTarget(event)) return;
             event.preventDefault();
             setIsSpacePressed(true);
         };
         const handleKeyUp = (event: KeyboardEvent) => {
+            if (event.key === "Alt" && !isEditableTarget(event)) {
+                event.preventDefault();
+                return;
+            }
             if (event.code !== "Space") return;
-            const target = event.target instanceof Element ? event.target : null;
-            if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true']"))) event.preventDefault();
+            if (!isEditableTarget(event)) event.preventDefault();
             setIsSpacePressed(false);
         };
         const onBlur = () => handlersRef.current.blur();

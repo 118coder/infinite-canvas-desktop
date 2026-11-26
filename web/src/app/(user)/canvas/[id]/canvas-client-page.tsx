@@ -2025,8 +2025,46 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         [cancelPendingConnectionCreate, screenToCanvas],
     );
 
+    // Alt + 点击：把被点节点作为"参考内容"，连到当前已选中的目标节点上。
+    // 连线方向固定为 参考节点 → 目标节点，和"从画布选择参考"、右上角圆点拖线完全一致，
+    // 不引入新的连线语义；已存在的连线自动去重。
+    const connectAltReference = useCallback((sourceId: string) => {
+        const source = nodesRef.current.find((node) => node.id === sourceId);
+        if (!source || !isCanvasReferenceNode(source)) {
+            message.warning("这个节点不能作为参考内容，请选择有内容的图片/视频/文本");
+            return;
+        }
+        const selected = selectedNodeIdsRef.current;
+        const targets = [...selected].filter((id) => id !== sourceId);
+        if (!targets.length) {
+            message.info(selected.size ? "请先选中另一个节点作为生成目标，再 Alt 点击这个参考节点" : "先点选要生成的目标节点，再按住 Alt 点击作为参考的节点");
+            return;
+        }
+        const additions: CanvasConnection[] = [];
+        targets.forEach((targetId) => {
+            const connection = normalizeConnection(sourceId, targetId, nodesRef.current, "source");
+            if (!connection) return;
+            const exists = connectionsRef.current.some((item) => item.fromNodeId === connection.fromNodeId && item.toNodeId === connection.toNodeId)
+                || additions.some((item) => item.fromNodeId === connection.fromNodeId && item.toNodeId === connection.toNodeId);
+            if (!exists) additions.push({ id: nanoid(), ...connection });
+        });
+        if (!additions.length) {
+            message.info("这些节点之间已经连过了");
+            return;
+        }
+        setConnections((prev) => [...prev, ...additions]);
+        message.success(additions.length > 1 ? `已设为 ${additions.length} 个节点的参考` : "已添加为参考内容");
+    }, [message]);
+
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
         if (event.button === 1) return;
+        // Alt + 左键是"快速加参考"，不改变当前选择、不启动拖拽、不弹面板
+        if (event.button === 0 && event.altKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            connectAltReference(nodeId);
+            return;
+        }
         event.stopPropagation();
         if (event.button === 0) setAgentReferenceNodeClick((current) => ({ nodeId, version: current.version + 1 }));
         setContextMenu(null);
@@ -2083,7 +2121,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
         setAlignmentGuides({});
-    }, []);
+    }, [connectAltReference]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (rafRef.current) {
@@ -5791,6 +5829,7 @@ function CanvasTopBar({
                     <Shortcut keys={["滚轮"]} value="缩放画布" />
                     <Shortcut keys={["拖动"]} value="使用当前工具操作画布" />
                     <Shortcut keys={["Shift / Ctrl / Cmd", "点击"]} value="追加选择节点" />
+                    <Shortcut keys={["Alt", "点击"]} value="把该节点设为已选中节点的参考内容" />
                     <Shortcut keys={["Ctrl / Cmd", "G"]} value="创建组" />
                     <Shortcut keys={["Ctrl / Cmd", "C / V"]} value="复制 / 粘贴节点，或粘贴剪切板文本/图片" />
                     <Shortcut keys={["Ctrl / Cmd", "Z"]} value="撤销" />

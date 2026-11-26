@@ -56,6 +56,7 @@ export const CanvasZoomControls = memo(function CanvasZoomControls({ onScaleChan
                     <Shortcut label="滚轮" value="缩放画布" />
                     <Shortcut label="拖动" value="使用当前工具操作画布" />
                     <Shortcut label="Shift / Ctrl / Cmd + 点击" value="追加选择节点" />
+                    <Shortcut label="Alt + 点击" value="设为已选中节点的参考内容" />
                     <Shortcut label="右键" value="节点 / 画布操作菜单" />
                     <Shortcut label="Ctrl / Cmd + G" value="打组选中节点" />
                     <Shortcut label="Ctrl / Cmd + Shift + G" value="取消打组" />
