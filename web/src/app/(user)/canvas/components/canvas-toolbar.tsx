@@ -44,6 +44,7 @@ export const CanvasToolbar = memo(function CanvasToolbar({
     onBackgroundModeChange,
     onShowImageInfoChange,
     onAutoLayout,
+    onGridLayout,
     onOpenMyAssets,
     onToggleMinimap,
     onGridSpacingChange,
@@ -76,6 +77,7 @@ export const CanvasToolbar = memo(function CanvasToolbar({
     onBackgroundModeChange: (mode: CanvasBackgroundMode) => void;
     onShowImageInfoChange: (show: boolean) => void;
     onAutoLayout: () => void;
+    onGridLayout: () => void;
     onOpenMyAssets: () => void;
     onToggleMinimap: () => void;
     onGridSpacingChange: (spacing: number) => void;
@@ -108,6 +110,7 @@ export const CanvasToolbar = memo(function CanvasToolbar({
         ],
         [
             { id: "tool-autolayout", label: "整理布局", icon: <Network className="size-4.5" />, onClick: onAutoLayout },
+            { id: "tool-gridlayout", label: "网格排版", shortcut: "图片多时更清爽", icon: <Grid2x2 className="size-4.5" />, onClick: onGridLayout },
             { id: "tool-assets", label: "我的素材", icon: <FolderOpen className="size-4.5" />, onClick: onOpenMyAssets },
             { id: "tool-style", label: "画布外观", icon: <Palette className="size-4.5" />, onClick: () => setAppearanceOpen((value) => !value), active: appearanceOpen },
         ],

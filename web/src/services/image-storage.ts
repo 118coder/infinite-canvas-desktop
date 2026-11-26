@@ -74,7 +74,9 @@ const previewKeyVersions = new Map<string, number>();
 const previewKeyListeners = new Map<string, Set<() => void>>();
 const previewListeners = new Set<(key: string) => void>();
 const serverUrls = new Map<string, string>();
-const previewQueue: Array<() => void> = [];
+// 队列项带优先级：可见节点当前档位优先于后台批量小档，避免 500 张图时视口内图片排在队尾
+const previewQueue: Array<{ run: () => void; priority: number; seq: number }> = [];
+let previewQueueSeq = 0;
 // 预览图长边上限调整（768 → 1536）后升版本，让旧缩略图重新生成为更清晰的一档
 const IMAGE_PREVIEW_VERSION = 2;
 // 主要任务是 @256 小档，单张编码很小；提高到 4 让 500 张图的过渡期尽快结束。
@@ -161,7 +163,7 @@ export function skipsImagePreview(url?: string, storageKey?: string) {
     return isInline || isComfyImageSource(storageKey) || isComfyImageSource(url);
 }
 
-export async function ensureImagePreview(key: string, url?: string, storageKey?: string, source = storageKey || url || "", cachedOnly = false, maxEdge?: number): Promise<string | undefined> {
+export async function ensureImagePreview(key: string, url?: string, storageKey?: string, source = storageKey || url || "", cachedOnly = false, maxEdge?: number, priority = 0): Promise<string | undefined> {
     if (!key || !source) return undefined;
     if (skipsImagePreview(url, storageKey)) {
         await deleteImagePreviews([key]);
@@ -181,7 +183,7 @@ export async function ensureImagePreview(key: string, url?: string, storageKey?:
     if (running?.source === source) return running.promise;
 
     const epoch = previewEpochs.get(key) || 0;
-    const promise = loadImagePreview(key, source, epoch, url, storageKey, cachedOnly, maxEdge).catch(() => undefined);
+    const promise = loadImagePreview(key, source, epoch, url, storageKey, cachedOnly, maxEdge, priority).catch(() => undefined);
     previewRequests.set(key, { source, promise });
     try {
         return await promise;
@@ -225,7 +227,7 @@ export async function deleteUnusedImagePreviews(prefix: string, usedKeys: Readon
     await deleteImagePreviews(keys.filter((key) => key.startsWith(prefix) && !usedKeys.has(key)));
 }
 
-async function loadImagePreview(key: string, source: string, epoch: number, url?: string, storageKey?: string, cachedOnly = false, maxEdge?: number) {
+async function loadImagePreview(key: string, source: string, epoch: number, url?: string, storageKey?: string, cachedOnly = false, maxEdge?: number, priority = 0) {
     const isCurrent = () => previewSources.get(key) === source && previewEpochs.get(key) === epoch;
     await previewDeletes.get(key);
     if (!isCurrent()) return undefined;
@@ -258,7 +260,7 @@ async function loadImagePreview(key: string, source: string, epoch: number, url?
         });
         if (!isCurrent()) return undefined;
         return preview ? cacheImagePreview(key, source, preview) : undefined;
-    });
+    }, priority);
 }
 
 // 预览生成（4K 解码 + 缩放 + WebP 编码）分批推进，手势期间整体停摆。
@@ -273,7 +275,14 @@ function drainPreviewQueue() {
         previewDrainScheduled = false;
         if (canvasGestureActive) return;
         while (previewActive < IMAGE_PREVIEW_CONCURRENCY && previewQueue.length) {
-            previewQueue.shift()?.();
+            // 优先级小的先执行；同优先级按入队顺序，避免视口内图片被后台小档淹没
+            let index = 0;
+            for (let i = 1; i < previewQueue.length; i += 1) {
+                const item = previewQueue[i];
+                const best = previewQueue[index];
+                if (item.priority < best.priority || (item.priority === best.priority && item.seq < best.seq)) index = i;
+            }
+            previewQueue.splice(index, 1)[0].run();
         }
         if (previewQueue.length) drainPreviewQueue();
     };
@@ -281,7 +290,7 @@ function drainPreviewQueue() {
     setTimeout(start, 12);
 }
 
-function queueImagePreview<T>(task: () => Promise<T>) {
+function queueImagePreview<T>(task: () => Promise<T>, priority = 0) {
     return new Promise<T>((resolve, reject) => {
         const run = () => {
             previewActive += 1;
@@ -292,8 +301,8 @@ function queueImagePreview<T>(task: () => Promise<T>) {
                     drainPreviewQueue();
                 });
         };
-        // 任务一律先入队，由 drainPreviewQueue 依据手势状态与并行上限决定是否启动
-        previewQueue.push(run);
+        // 任务一律先入队，由 drainPreviewQueue 依据优先级、手势状态与并行上限决定是否启动
+        previewQueue.push({ run, priority, seq: previewQueueSeq++ });
         drainPreviewQueue();
     });
 }

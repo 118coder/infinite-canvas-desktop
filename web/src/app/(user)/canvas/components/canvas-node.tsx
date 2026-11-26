@@ -981,7 +981,8 @@ function ImageContent({
     useEffect(() => {
         if (!content || isLocalSource) return;
         if (previewUrlFor(targetKey, previewSource)) return;
-        void ensureImagePreview(targetKey, content, storageKey, previewSource, false, targetLevel).catch(() => undefined);
+        // 当前视口里的节点请求用最高优先级，插到后台批量 @256 任务前面
+        void ensureImagePreview(targetKey, content, storageKey, previewSource, false, targetLevel, 0).catch(() => undefined);
     }, [content, isLocalSource, targetKey, targetLevel, previewSource, storageKey]);
 
     // 从目标档一路回退到 @256。换档时先把新位图预解码再替换 <img src>，

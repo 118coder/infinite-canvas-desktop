@@ -6,6 +6,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import { ActiveConnectionPath, ConnectionPath } from "./canvas-connections";
 import { useCommittedScale, useCullKey, viewportStore } from "../stores/use-viewport-store";
 import { isHiddenBatchChildFast, isHiddenBatchEndpointFast } from "../utils/canvas-batch-visibility";
+import { isHiddenConnectionEndpointFast, isNodeHiddenFast } from "../utils/canvas-hidden-nodes";
 import { buildNodeSpatialIndex, queryNodeSpatialIndex, rectsIntersect, viewportWorldRect, type WorldRect } from "../utils/canvas-spatial-index";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "../types";
 
@@ -26,6 +27,7 @@ type CanvasStageProps = {
     connectionTargetNodeId: string | null;
     selectionBox: SelectionBox | null;
     collapsingBatchIds: Set<string>;
+    hiddenNodeIds: ReadonlySet<string>;
     onSelectConnection: (connectionId: string) => void;
     onConnectionContextMenu: (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => void;
     renderNode: (node: CanvasNodeData, scale: number, lightweight: boolean) => ReactNode;
@@ -41,7 +43,7 @@ const LIGHTWEIGHT_EXIT_SCALE = 0.55;
  * 画布世界层的渲染子树。它单独订阅视口的裁剪 tick 与提交后的缩放，
  * 因此平移/缩放手势不会再重渲染 6000 多行的画布页主体。
  */
-export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, screenHeight, selectedConnectionId, relatedConnectionIds, connectingParams, mouseWorld, connectionTargetNodeId, selectionBox, collapsingBatchIds, onSelectConnection, onConnectionContextMenu, renderNode, children }: CanvasStageProps) {
+export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, screenHeight, selectedConnectionId, relatedConnectionIds, connectingParams, mouseWorld, connectionTargetNodeId, selectionBox, collapsingBatchIds, hiddenNodeIds, onSelectConnection, onConnectionContextMenu, renderNode, children }: CanvasStageProps) {
     const cullKey = useCullKey();
     const scale = useCommittedScale();
     const lightweightRef = useRef(false);
@@ -49,13 +51,13 @@ export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, 
 
     const { rect, visibleNodes } = useMemo(() => {
         const current = viewportWorldRect(viewportStore.getLive(), screenWidth, screenHeight);
-        const visible = queryNodeSpatialIndex(index, current, nodes).filter((node) => !isHiddenBatchChildFast(node, nodeById, collapsingBatchIds));
+        const visible = queryNodeSpatialIndex(index, current, nodes).filter((node) => !isHiddenBatchChildFast(node, nodeById, collapsingBatchIds) && !isNodeHiddenFast(node, hiddenNodeIds));
         return { rect: current, visibleNodes: visible };
         // cullKey / scale 是视口变化的提交信号；live 视口在回调里读取，避免每帧进 state。
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [index, nodes, nodeById, collapsingBatchIds, cullKey, scale, screenWidth, screenHeight]);
+    }, [index, nodes, nodeById, collapsingBatchIds, hiddenNodeIds, cullKey, scale, screenWidth, screenHeight]);
 
-    const { normalPath, hitConnections, activeConnections } = useMemo(() => collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds }), [connections, nodeById, rect, selectedConnectionId, relatedConnectionIds]);
+    const { normalPath, hitConnections, activeConnections } = useMemo(() => collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds, hiddenNodeIds }), [connections, nodeById, rect, selectedConnectionId, relatedConnectionIds, hiddenNodeIds]);
     // 用 live 缩放判定，缩放手势跨过阈值时立即切到瓦片，不会在手势中继续挂载完整节点；
     // 平移时 k 不变，判定保持稳定。传给节点的 scale 仍是 committed 值，避免手势中反复换档解码。
     // 手势期间冻结节点形态：跨过阈值也不在拖拽/缩放途中增删装饰元素，
@@ -129,7 +131,7 @@ export function CanvasStage({ nodes, connections, nodeById, theme, screenWidth, 
     );
 }
 
-function collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds }: { connections: CanvasConnection[]; nodeById: Map<string, CanvasNodeData>; rect: WorldRect; selectedConnectionId: string | null; relatedConnectionIds: Set<string> }) {
+function collectConnections({ connections, nodeById, rect, selectedConnectionId, relatedConnectionIds, hiddenNodeIds }: { connections: CanvasConnection[]; nodeById: Map<string, CanvasNodeData>; rect: WorldRect; selectedConnectionId: string | null; relatedConnectionIds: Set<string>; hiddenNodeIds: ReadonlySet<string> }) {
     const normalParts: string[] = [];
     const hitConnections: HitConnection[] = [];
     const activeConnections: ActiveConnection[] = [];
@@ -138,6 +140,7 @@ function collectConnections({ connections, nodeById, rect, selectedConnectionId,
         const from = nodeById.get(connection.fromNodeId);
         const to = nodeById.get(connection.toNodeId);
         if (!from || !to || isHiddenBatchEndpointFast(from, nodeById) || isHiddenBatchEndpointFast(to, nodeById)) return;
+        if (isHiddenConnectionEndpointFast(from, to, hiddenNodeIds, nodeById)) return;
 
         const startX = from.position.x + from.width;
         const startY = from.position.y + from.height / 2;

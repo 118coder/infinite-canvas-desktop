@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Globe2, Home, ImageIcon, Images, Keyboard, Layers3, List, Menu, Bot, Music2, PanelLeftClose, PanelLeftOpen, Pause, Play, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
@@ -30,6 +30,8 @@ import { captureVideoFrame, type VideoFramePosition } from "../utils/canvas-vide
 import { PANORAMA_IMAGE_SIZE, PANORAMA_NODE_SIZE, buildPanoramaPrompt, isCanvasImageNodeType, isPanoramaNodeType } from "../utils/canvas-panorama";
 import { applyCameraPrompt } from "../utils/canvas-camera";
 import { computeAutoLayout } from "../utils/canvas-auto-layout";
+import { computeGridLayout } from "../utils/canvas-grid-layout";
+import { addHiddenNodeIds, clearHiddenNodeIds, EMPTY_HIDDEN_IDS, getHiddenNodeIds, isNodeHiddenFast, loadHiddenNodeIds, removeHiddenNodeIds, resolveHideTargets, subscribeHiddenNodes } from "../utils/canvas-hidden-nodes";
 import { GROUP_PADDING, findContainingGroupId, findGroupDropTarget, getNodeBounds, snapNodesIntoGroup } from "../utils/canvas-group";
 import {
     calculateCanvasAlignment,
@@ -83,7 +85,7 @@ import { useUpdateStore } from "@/stores/use-update-store";
 import { hydrateCanvasImagesSafe, imageMetadata } from "../utils/canvas-media-restore";
 import { consumePendingCanvasInsert, rememberCanvasId } from "@/lib/canvas-handoff";
 import { recordRecentAssetId } from "@/hooks/use-asset-filters";
-import { assistantReferenceContentFromNode, buildNodeMentionReferences, isCanvasReferenceNode } from "../utils/canvas-resource-references";
+import { assistantReferenceContentFromNode, buildNodeMentionReferences, buildNodeMentionReferencesIndexed, buildResourceIndex, isCanvasReferenceNode } from "../utils/canvas-resource-references";
 import { buildCanvasAgentContext } from "../agent/canvas-agent-context";
 import type { CanvasAgentAction, CanvasAgentToolResult } from "../agent/canvas-agent-tools";
 import {
@@ -449,6 +451,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    // 隐藏状态是视图偏好，单独按项目存储，不进入 nodes / project 数据
+    const hiddenNodeIds = useSyncExternalStore(subscribeHiddenNodes, () => getHiddenNodeIds(projectId), () => EMPTY_HIDDEN_IDS);
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const gridSpacing = useCanvasUiStore((state) => state.gridSpacing);
@@ -515,6 +519,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
     const nodesRef = useRef(nodes);
     const previewSourcesRef = useRef(new Map<string, string>());
+    const previewHiddenRef = useRef(new Set<string>());
     const consumedAgentRequestProjectRef = useRef<string | null>(null);
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
@@ -724,6 +729,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         }
 
         const restore = async () => {
+            // 隐藏集合与视口一样按项目单独恢复，绝不能写进 project.nodes
+            await loadHiddenNodeIds(projectId);
             const storedViewport = await loadViewport(projectId).catch(() => null);
             const resetNodes = resetInterruptedGeneration(project.nodes);
             // 多档 LOD：清理名单必须包含全部档位，否则打开画布会把未列入的档位误删重生成。
@@ -1037,6 +1044,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     useEffect(() => {
         const previous = previewSourcesRef.current;
         const next = new Map<string, string>();
+        const previouslyHidden = previewHiddenRef.current;
+        const nowHidden = new Set<string>();
 
         nodes.forEach((node) => {
             if (!isCanvasImageNodeType(node.type)) return;
@@ -1045,18 +1054,26 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             if (!content && !storageKey) return;
             const source = `${node.metadata?.primaryImageId || ""}:${node.metadata?.imageTaskResultId || ""}:${storageKey || content}`;
             next.set(node.id, source);
+            // 隐藏的图片不排队生成小档，把队列预算让给视口内真正要显示的图片；
+            // 取消隐藏时 previouslyHidden 会命中，重新排队。
+            if (isNodeHiddenFast(node, hiddenNodeIds)) {
+                nowHidden.add(node.id);
+                return;
+            }
             // 新图只排队生成 @256 小档（缩小态瓦片与侧栏共用）；
             // 1536/2048 高档由 ImageContent 在节点真正放大进入完整模式时按需生成，
             // 500 张 4K 图不会在打开画布时一次性生成 500 张大档位。
-            if (previous.get(node.id) !== source) {
-                void ensureImagePreview(smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`), content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE).catch(() => undefined);
+            if (previous.get(node.id) !== source || previouslyHidden.has(node.id)) {
+                // 后台小档用低优先级：视口内节点当前档位的请求会插到这批任务前面
+                void ensureImagePreview(smallImagePreviewKey(`canvas-node:${projectId}:${node.id}`), content, storageKey, source, false, SMALL_IMAGE_PREVIEW_MAX_EDGE, 2).catch(() => undefined);
             }
         });
 
         const removed = [...previous.keys()].filter((id) => !next.has(id));
         previewSourcesRef.current = next;
+        previewHiddenRef.current = nowHidden;
         if (removed.length) void deleteImagePreviews(removed.map((id) => `canvas-node:${projectId}:${id}`));
-    }, [nodes, projectId]);
+    }, [nodes, projectId, hiddenNodeIds]);
 
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
@@ -1188,7 +1205,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             let bestPriority = Number.POSITIVE_INFINITY;
 
             [...nodesRef.current]
-                .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenFast(node, hiddenNodeIds))
                 .reverse()
                 .forEach((node) => {
                     const anchor = getConnectionTargetAnchor(node, current);
@@ -1211,7 +1228,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
 
             return { nodeId: bestNodeId, isNearNode };
         },
-        [screenToCanvas],
+        [screenToCanvas, hiddenNodeIds],
     );
 
     // 视口裁剪已移到 CanvasStage：只订阅裁剪 tick，用空间索引增量计算，平移不再重算整页。
@@ -1298,6 +1315,9 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     const contextMenuTargetNodes = useMemo(() => nodes.filter((node) => contextMenuTargetIds.has(node.id)), [contextMenuTargetIds, nodes]);
     const canGroupSelection = contextMenuTargetNodes.length >= 2 && contextMenuTargetNodes.every((node) => node.type !== CanvasNodeType.Group && !node.metadata?.groupId);
     const canUngroupSelection = contextMenuTargetNodes.some((node) => node.type === CanvasNodeType.Group || node.metadata?.groupId);
+    const contextMenuHasHidden = contextMenuTargetNodes.some((node) => isNodeHiddenFast(node, hiddenNodeIds));
+    const contextMenuHideable = contextMenuTargetNodes.some((node) => isCanvasImageNodeType(node.type));
+    const contextMenuCanHideGroup = contextMenuTargetNodes.some((node) => node.type === CanvasNodeType.Group || node.metadata?.isBatchRoot || node.metadata?.groupId || node.metadata?.batchRootId);
     const contextMenuCopyText = contextMenuNode ? (contextMenuNode.type === CanvasNodeType.Text ? contextMenuNode.metadata?.content || "" : contextMenuNode.metadata?.prompt || "") : "";
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const openDirectorNode = openDirectorNodeId ? nodeById.get(openDirectorNodeId) || null : null;
@@ -1376,8 +1396,10 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         return map;
     }, [connections, structuralNodeById, structuralNodes]);
     const mentionReferencesByNodeId = useMemo(() => {
+        // 索引只建一次，避免每个节点都全量 filter 连线 + find 节点（O(N² + N·E) → O(N + E)）
+        const index = buildResourceIndex(structuralNodes, connections);
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        structuralNodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, structuralNodes, connections)));
+        structuralNodes.forEach((node) => map.set(node.id, buildNodeMentionReferencesIndexed(node, index)));
         return map;
     }, [connections, structuralNodes]);
     const connectedNodesByNodeId = useMemo(() => {
@@ -1477,6 +1499,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             });
             const removedNodes = nodesRef.current.filter((node) => allIds.has(node.id));
             const remainingNodes = nodesRef.current.filter((node) => !allIds.has(node.id));
+            // 删除后同步移除隐藏标记，避免"显示隐藏图片（N）"里留下幽灵条目
+            removeHiddenNodeIds(projectId, allIds);
             // 删除生成中的节点：中止在途请求与轮询，并清掉任务表里钉住任务结果的引用。
             // 裸 nodeId key 此前永远不会被清理（历史清理只删含 ":" 的复合 key），会随删除累积泄漏。
             allIds.forEach((id) => {
@@ -1798,7 +1822,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
     }, [size.height, size.width]);
 
     const fitView = useCallback(() => {
-        const visibleNodes = nodesRef.current.filter((node) => !isHiddenBatchChild(node, nodesRef.current));
+        const visibleNodes = nodesRef.current.filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenFast(node, hiddenNodeIds));
         if (!visibleNodes.length) {
             resetViewport();
             return;
@@ -1815,12 +1839,29 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             y: height / 2 - ((bounds.top + bounds.bottom) / 2) * k,
             k,
         });
-    }, [resetViewport, size.height, size.width]);
+    }, [resetViewport, size.height, size.width, hiddenNodeIds]);
 
     const autoLayoutNodes = useCallback(() => {
         const positions = computeAutoLayout(nodesRef.current, connectionsRef.current);
         if (!positions.size) {
             message.info("画布上还没有连线，无需整理");
+            return;
+        }
+        const nextNodes = nodesRef.current.map((node) => {
+            const position = positions.get(node.id);
+            return position ? { ...node, position } : node;
+        });
+        nodesRef.current = nextNodes;
+        setNodes(nextNodes);
+        setAlignmentGuides({});
+        fitView();
+    }, [fitView, message]);
+
+    // 图片很多时拓扑分层会堆成一条长竖列；网格排版把顶层单元压成接近 16:9 的方阵。
+    const gridLayoutNodes = useCallback(() => {
+        const positions = computeGridLayout(nodesRef.current, connectionsRef.current);
+        if (!positions.size) {
+            message.info("画布上还没有节点，无需排版");
             return;
         }
         const nextNodes = nodesRef.current.map((node) => {
@@ -2189,7 +2230,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 const nextSelected = new Set<string>(selection.additive ? selection.initialSelectedNodeIds : []);
                 const candidates = queryNodeSpatialIndex(nodeSpatialIndexRef.current, { left: rectX, right: rectX + rectW, top: rectY, bottom: rectY + rectH, width: rectW, height: rectH, k: 1 }, nodesRef.current);
                 candidates.forEach((node) => {
-                    if (isHiddenBatchChild(node, nodesRef.current)) return;
+                    if (isHiddenBatchChild(node, nodesRef.current) || isNodeHiddenFast(node, hiddenNodeIds)) return;
                     const intersects = rectX < node.position.x + node.width && rectX + rectW > node.position.x && rectY < node.position.y + node.height && rectY + rectH > node.position.y;
                     if (intersects) nextSelected.add(node.id);
                 });
@@ -2200,7 +2241,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 setSelectedNodeIds(nextSelected);
             });
         },
-        [screenToCanvas],
+        [screenToCanvas, hiddenNodeIds],
     );
 
     const handleGlobalMouseUp = useCallback(
@@ -4973,6 +5014,11 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                 width={sidePanel.width}
                 onWidthChange={handleSidePanelWidthChange}
                 onFocusNode={focusNode}
+                hiddenNodeIds={hiddenNodeIds}
+                onToggleNodeHidden={(nodeId) => {
+                    if (hiddenNodeIds.has(nodeId)) removeHiddenNodeIds(projectId, [nodeId]);
+                    else addHiddenNodeIds(projectId, [nodeId]);
+                }}
                 onAssetDragStart={handleAssetDragStart}
                 onAssetDragEnd={handleAssetDragEnd}
                 onInsertAsset={handleAssetInsert}
@@ -5047,6 +5093,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                         connectionTargetNodeId={connectionTargetNodeId}
                         selectionBox={selectionBox}
                         collapsingBatchIds={collapsingBatchIds}
+                        hiddenNodeIds={hiddenNodeIds}
                         onSelectConnection={selectConnection}
                         onConnectionContextMenu={openConnectionContextMenu}
                         renderNode={(node, scale, lightweight) => (
@@ -5243,6 +5290,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                     onAutoLayout={autoLayoutNodes}
+                    onGridLayout={gridLayoutNodes}
                     onOpenMyAssets={handleToolbarOpenAssets}
                     onToggleMinimap={handleToolbarToggleMinimap}
                     onGridSpacingChange={setGridSpacing}
@@ -5299,6 +5347,30 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                                         setContextMenu(null);
                                     }
                                     : undefined,
+                            onUnhide: contextMenuHasHidden
+                                ? () => {
+                                      if (contextMenu.type === "node") removeHiddenNodeIds(projectId, resolveHideTargets(contextMenuTargetIds, nodesRef.current, true));
+                                      setContextMenu(null);
+                                  }
+                                : undefined,
+                            onHide: contextMenuHideable
+                                ? () => {
+                                      if (contextMenu.type === "node") addHiddenNodeIds(projectId, contextMenuTargetIds);
+                                      setSelectedNodeIds((current) => {
+                                          const next = new Set(current);
+                                          contextMenuTargetIds.forEach((id) => next.delete(id));
+                                          return next;
+                                      });
+                                      setDialogNodeId(null);
+                                      setContextMenu(null);
+                                  }
+                                : undefined,
+                            onHideGroup: contextMenuCanHideGroup
+                                ? () => {
+                                      if (contextMenu.type === "node") addHiddenNodeIds(projectId, resolveHideTargets(contextMenuTargetIds, nodesRef.current, true));
+                                      setContextMenu(null);
+                                  }
+                                : undefined,
                             onDelete: () => {
                                 if (contextMenu.type === "node") {
                                     deleteNodes(contextMenuTargetIds);
@@ -5318,12 +5390,18 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
                             setContextMenu(null);
                         }}
                         onSelectAll={() => {
-                            setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
+                            setSelectedNodeIds(new Set(nodesRef.current.filter((node) => !isNodeHiddenFast(node, hiddenNodeIds)).map((node) => node.id)));
                             setSelectedConnectionId(null);
                             setContextMenu(null);
                         }}
                         onFitView={fitView}
                         onAutoLayout={autoLayoutNodes}
+                        onGridLayout={gridLayoutNodes}
+                        hiddenCount={hiddenNodeIds.size}
+                        onShowHidden={() => {
+                            clearHiddenNodeIds(projectId);
+                            setContextMenu(null);
+                        }}
                         onPaste={() => {
                             if (!pasteCopiedNodes()) void pasteSystemClipboard();
                             setContextMenu(null);

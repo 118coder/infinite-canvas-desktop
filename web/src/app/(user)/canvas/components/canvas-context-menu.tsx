@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, Boxes, Copy, CopyPlus, Download, GalleryHorizontal, GalleryHorizontalEnd, Image as ImageIcon, Maximize, Music2, Network, Save, SquareSplitHorizontal, Trash2, Type, Ungroup, Upload, Video } from "lucide-react";
+import { BetweenHorizontalStart, Boxes, Copy, CopyPlus, Download, Eye, EyeOff, GalleryHorizontal, GalleryHorizontalEnd, Grid2x2, Image as ImageIcon, Maximize, Music2, Network, Save, SquareSplitHorizontal, Trash2, Type, Ungroup, Upload, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -17,6 +17,9 @@ type NodeMenuActions = {
     onCopyContent?: () => void;
     onSaveAsset?: () => void;
     onDownload?: () => void;
+    onHide?: () => void;
+    onHideGroup?: () => void;
+    onUnhide?: () => void;
     onDelete: () => void;
 };
 
@@ -30,6 +33,9 @@ export function CanvasContextMenu({
     onSelectAll,
     onFitView,
     onAutoLayout,
+    onGridLayout,
+    hiddenCount,
+    onShowHidden,
     onPaste,
 }: {
     menu: ContextMenuState;
@@ -41,6 +47,9 @@ export function CanvasContextMenu({
     onSelectAll: () => void;
     onFitView: () => void;
     onAutoLayout: () => void;
+    onGridLayout: () => void;
+    hiddenCount: number;
+    onShowHidden: () => void;
     onPaste: () => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -74,7 +83,9 @@ export function CanvasContextMenu({
                     <MenuButton icon={<Copy className="size-4" />} label="粘贴节点" onClick={onPaste} />
                     <MenuButton icon={<SquareSplitHorizontal className="size-4" />} label="全选节点" onClick={onSelectAll} />
                     <MenuButton icon={<Network className="size-4" />} label="整理节点布局" onClick={onAutoLayout} />
+                    <MenuButton icon={<Grid2x2 className="size-4" />} label="网格排版（图片多更清爽）" onClick={onGridLayout} />
                     <MenuButton icon={<Maximize className="size-4" />} label="适应全部节点" onClick={onFitView} />
+                    {hiddenCount ? <MenuButton icon={<Eye className="size-4" />} label={`显示隐藏的图片（${hiddenCount}）`} onClick={onShowHidden} /> : null}
                 </>
             ) : null}
         </div>
@@ -99,6 +110,9 @@ function NodeMenuItems({ canCaptureVideoFrame, actions }: { canCaptureVideoFrame
             {actions.onSaveAsset ? <MenuButton icon={<Save className="size-4" />} label="保存到我的素材" onClick={actions.onSaveAsset} /> : null}
             {actions.onDownload ? <MenuButton icon={<Download className="size-4" />} label="下载" onClick={actions.onDownload} /> : null}
             <Divider />
+            {actions.onUnhide ? <MenuButton icon={<Eye className="size-4" />} label="取消隐藏" onClick={actions.onUnhide} /> : null}
+            {actions.onHide ? <MenuButton icon={<EyeOff className="size-4" />} label="隐藏选中图片" onClick={actions.onHide} /> : null}
+            {actions.onHideGroup ? <MenuButton icon={<EyeOff className="size-4" />} label="隐藏整个分组" onClick={actions.onHideGroup} /> : null}
             <MenuButton icon={<Trash2 className="size-4" />} label="删除" onClick={actions.onDelete} danger />
         </>
     );

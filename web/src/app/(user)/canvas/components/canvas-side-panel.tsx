@@ -3,7 +3,7 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type UIEvent as ReactUIEvent } from "react";
 import { Empty, Input, Pagination, Select, Spin } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, ChevronRight, Clapperboard, Eye, FileText, Group, Image as ImageIcon, Music2, Plus, Search, Settings2, Type, Video } from "lucide-react";
+import { BookOpen, ChevronRight, Clapperboard, Eye, EyeOff, FileText, Group, Image as ImageIcon, Music2, Plus, Search, Settings2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 
 import { AssetFormModal } from "@/components/assets/asset-form-modal";
@@ -40,6 +40,8 @@ type Props = {
     width: number;
     onWidthChange: (width: number) => void;
     onFocusNode: (nodeId: string) => void;
+    hiddenNodeIds: ReadonlySet<string>;
+    onToggleNodeHidden: (nodeId: string) => void;
     onAssetDragStart: (payload: InsertAssetPayload) => void;
     onAssetDragEnd: () => void;
     onInsertAsset: (payload: InsertAssetPayload) => void;
@@ -93,7 +95,7 @@ const STATUS_COLOR: Record<string, string> = {
     error: "#ef4444",
 };
 
-export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNodeIds, open, width, onWidthChange, onFocusNode, onAssetDragStart, onAssetDragEnd, onInsertAsset }: Props) {
+export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNodeIds, open, width, onWidthChange, onFocusNode, hiddenNodeIds, onToggleNodeHidden, onAssetDragStart, onAssetDragEnd, onInsertAsset }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
     const [mounted, setMounted] = useState(open);
@@ -161,7 +163,7 @@ export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNo
                 </div>
                 <div className="mt-2 min-h-0 flex-1 overflow-hidden">
                     {tab === "canvas" ? (
-                        <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} theme={theme} />
+                        <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} hiddenNodeIds={hiddenNodeIds} onToggleNodeHidden={onToggleNodeHidden} theme={theme} />
                     ) : tab === "assets" ? (
                         <CanvasAssetsTab theme={theme} onAssetDragStart={onAssetDragStart} onAssetDragEnd={onAssetDragEnd} />
                     ) : (
@@ -188,7 +190,7 @@ const NODE_ROW_GAP = 6;
 const NODE_ROW_STRIDE = NODE_ROW_HEIGHT + NODE_ROW_GAP;
 const NODE_WINDOW_EXTRA = 8;
 
-function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; theme: CanvasTheme }) {
+function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, hiddenNodeIds, onToggleNodeHidden, theme }: { nodes: CanvasNodeData[]; selectedNodeIds: Set<string>; onFocusNode: (nodeId: string) => void; hiddenNodeIds: ReadonlySet<string>; onToggleNodeHidden: (nodeId: string) => void; theme: CanvasTheme }) {
     // 节点拖动时 nodes 每帧变化，用延迟值让长列表不逐帧重建；数量显示仍用原始 nodes
     const deferredNodes = useDeferredValue(nodes);
     const projectId = useCanvasUiStore((state) => state.openProjectId) || "";
@@ -331,7 +333,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                             const rowKey = `canvas-node:${projectId}:${node.id}`;
                             const rowImage = previewUrlFor(smallImagePreviewKey(rowKey), previewSource) || previewUrlFor(rowKey, previewSource) || node.metadata?.content;
                             return (
-                                <div key={node.id} className={cn("relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_56px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
+                                <div key={node.id} className={cn("group relative flex items-center rounded-lg transition [content-visibility:auto] [contain-intrinsic-size:auto_56px]", depth && "ml-5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5", hiddenNodeIds.has(node.id) && "opacity-50")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
                                     {depth ? <span className="pointer-events-none absolute -left-3 top-[calc(-50%-0.4rem)] h-[calc(100%+0.4rem)] w-3 rounded-bl-md border-b border-l opacity-45" style={{ borderColor: theme.node.stroke }} /> : null}
                                     {node.type === CanvasNodeType.Group && hasChildren ? (
                                         <button type="button" onClick={() => setCollapsedGroups((current) => (current.has(node.id) ? new Set([...current].filter((id) => id !== node.id)) : new Set(current).add(node.id)))} className="ml-1 grid size-6 shrink-0 place-items-center opacity-55 transition hover:opacity-100" aria-label={node.title}>
@@ -358,6 +360,16 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, theme }: { nodes:
                                             <span className="block truncate text-xs leading-snug opacity-50">{node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt || "" : NODE_TYPE_LABEL[node.type] || node.type}</span>
                                         </span>
                                         {node.metadata?.status && node.metadata.status !== "idle" ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: STATUS_COLOR[node.metadata.status] || "transparent" }} /> : null}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="mr-1.5 grid size-7 shrink-0 place-items-center rounded-md opacity-60 transition hover:opacity-100"
+                                        style={{ color: hiddenNodeIds.has(node.id) ? theme.node.muted : undefined }}
+                                        aria-label={hiddenNodeIds.has(node.id) ? "显示此节点" : "隐藏此节点"}
+                                        title={hiddenNodeIds.has(node.id) ? "显示此节点" : "隐藏此节点"}
+                                        onClick={() => onToggleNodeHidden(node.id)}
+                                    >
+                                        {hiddenNodeIds.has(node.id) ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5 opacity-0 group-hover:opacity-60" />}
                                     </button>
                                 </div>
                             );
