@@ -407,10 +407,12 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         startY: number;
         initialSelectedNodes: { id: string; x: number; y: number }[];
         clickedGroupId: string | null;
+        additive: boolean;
     }>({
         isDraggingNode: false,
         hasMoved: false,
         clickedGroupId: null,
+        additive: false,
         startX: 0,
         startY: 0,
         initialSelectedNodes: [],
@@ -2036,18 +2038,20 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         const currentSelected = selectedNodeIdsRef.current;
         const currentNodes = nodesRef.current;
         const nextSelected = new Set(currentSelected);
+        const isAdditive = event.shiftKey || event.metaKey || event.ctrlKey;
 
-        if (event.shiftKey || event.metaKey || event.ctrlKey) {
-            if (nextSelected.has(nodeId)) {
-                nextSelected.delete(nodeId);
-            } else {
-                nextSelected.add(nodeId);
-            }
+        if (isAdditive) {
+            // 修饰键点击：已选中则取消，未选中则追加（不清除其余选区）
+            if (nextSelected.has(nodeId)) nextSelected.delete(nodeId);
+            else nextSelected.add(nodeId);
         } else if (!nextSelected.has(nodeId)) {
             nextSelected.clear();
             nextSelected.add(nodeId);
         }
 
+        // 立即同步 ref：下面拖拽初始化和后续 mouseup 都读它；组件里的 useLayoutEffect
+        // 只应在 state 真正落后时补同步，不能在修饰键连点时用旧 state 覆盖这里的结果。
+        selectedNodeIdsRef.current = nextSelected;
         setSelectedNodeIds(nextSelected);
         setToolbarNodeId(nextSelected.size === 1 && nextSelected.has(nodeId) ? nodeId : null);
         if (event.button !== 0) return;
@@ -2066,6 +2070,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             isDraggingNode: true,
             hasMoved: false,
             clickedGroupId: currentNodes.find((node) => node.id === nodeId)?.type === CanvasNodeType.Group ? nodeId : null,
+            additive: isAdditive,
             startX: event.clientX,
             startY: event.clientY,
             initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
@@ -2090,7 +2095,8 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
             return;
         }
 
-        const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.length === 1;
+        // 修饰键点击是"追加/取消选择"，不应顺带弹出提示词面板盖住画布
+        const wasClick = !dragRef.current.hasMoved && !dragRef.current.additive && dragRef.current.initialSelectedNodes.length === 1;
         const clickedNodeId = dragRef.current.clickedGroupId || dragRef.current.initialSelectedNodes[0]?.id;
         const currentViewport = viewportStore.getLive();
         const rawOffset = {
@@ -2127,6 +2133,7 @@ function InfiniteCanvasPage({ projectId }: { projectId: string }) {
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.clickedGroupId = null;
+        dragRef.current.additive = false;
         dragRef.current.initialSelectedNodes = [];
         alignmentContextRef.current = null;
         setDropTargetGroupId(null);

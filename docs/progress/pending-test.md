@@ -5,6 +5,12 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+## 追加选择节点修复（v0.12.1）
+
+- `handleNodeMouseDown` 里立即把计算出的新选中集合写回 `selectedNodeIdsRef.current`，避免修饰键连点时 `useLayoutEffect` 用旧 state 覆盖 ref，导致 Shift / Ctrl / Cmd + 点击追加无效
+- 修饰键点击不再在鼠标抬起时弹出提示词面板（原本面板会盖住画布，看起来像"追加没生效"）
+- 待人工验证：选中 A 后 Shift+点击 B，A 与 B 同时选中；再 Ctrl+点击 C 追加；再 Cmd+点击 B 取消 B；全过程不弹出提示词面板
+
 ## 密集图片排版 / 右键隐藏 / 4K 预览队列（本轮）
 
 ### 网格排版
