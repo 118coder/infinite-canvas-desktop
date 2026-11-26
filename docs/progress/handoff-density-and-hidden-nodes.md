@@ -1,5 +1,7 @@
 # 交接文档：密集图片排版 / 右键隐藏 / 4K 预览队列优先级
 
+> **发版状态**：v0.12.0（2026-11-26）与 v0.12.1（同日热修追加选择）均已正式发行（Release success，draft=false / prerelease=false，exe+zip+canvas-cli 三资产齐全）。本地根目录 exe 已替换为 v0.12.1（sha256 `5ebed8f8a8464c5b7d3278928feb7f67c695441e4b639fafd85674d02a4a6986`），zip 为 `infinite-canvas-v0.12.1-win-x64.zip`（sha256 `4971c7c0f1fd85804eff0add7b70743475f4e504c6a5d454e39ed03c4422b217`）。并发过一次 GitHub API 5000 次限流（约 1 分钟恢复），后续大批量推送注意节流。
+
 > 本轮基于 v0.11.0（`ed1baad`）继续优化，三项改动都**不改项目数据模型、不改 nodes/project 字段、不改导出格式**。
 > 动手前先读 `AGENTS.md` 与上一版 `docs/progress/handoff-canvas-optimization.md`，里面记录的视口双通道、LOD、零闪烁红线仍然完全适用。
 
