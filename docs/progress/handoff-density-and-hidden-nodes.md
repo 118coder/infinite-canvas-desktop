@@ -67,7 +67,9 @@
 ## 三、验证结果（工具侧，不等于功能通过）
 
 - `web/node_modules/.bin/tsc --noEmit`：**11 个错误，全部是改动前就有的**（`canvas-client-page.tsx` 9 个 `string | undefined`、`audio-settings-panel.tsx` 与 `minimax-tts-voice-select.tsx` 各 1 个 TS2347）。本轮改动文件 0 新增错误。
-- `next build --webpack` 三次均失败在 `EPERM: open '.next/trace'`，是本机文件锁环境问题（删除 `.next` 后立刻重建仍被锁），与代码无关；构建缓存已直接删除（未进回收站）。**没有拿到绿色构建结论**。
+- `next build --webpack` 三次均失败在 `EPERM: open '.next/trace'`，是本机文件锁环境问题（删除 `.next` 后立刻重建仍被锁），与代码无关；构建缓存已直接删除（未进回收站）。本地构建没拿到绿色结论，但**云端构建已通过**。
+- 云端：本地提交 `4bdfaf3` 经 Git Data API 推送为远程 `adb0dcff`（远程原 main 的 tree 与本地父提交完全一致，仅 commit 哈希因历史重写不同）；GitHub Actions `CI` 与 `Build Desktop` 均 success（run 45800370444 / 45800370445）。
+- `desktop-latest` 新 exe：sha256 `403b1e6f688a4d284cbb61eee7c2ecaa2110b08ad1c42cb1c97ccf56ba1dee16`，70,722,560 字节；已下载校验并覆盖仓库根目录旧 exe（旧 sha256 `56e08b14...`），临时下载文件已删除。
 - `git diff --stat`：8 个已跟踪文件改动 + 2 个新工具文件；未触碰用户原有的 `desktop_url.txt` 修改与根目录未跟踪的 exe/zip。
 
 **必须由用户实机验收**：
